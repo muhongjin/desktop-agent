@@ -1,0 +1,42 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "desktop-agent"
+version = "0.1.0"
+description = "Windows-first desktop AI agent"
+requires-python = ">=3.12"
+dependencies = [
+    "PySide6>=6.8,<6.9",
+    "qasync",
+    "httpx",
+    "aiosqlite",
+    "pydantic",
+    "platformdirs",
+    "keyring",
+    "send2trash",
+    "pywin32",
+]
+
+[project.scripts]
+desktop-agent = "desktop_agent.main:main"
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "pytest-qt",
+    "ruff",
+    "PyInstaller",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/desktop_agent"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.ruff]
+line-length = 100

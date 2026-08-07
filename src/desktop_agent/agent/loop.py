@@ -67,27 +67,34 @@ class AgentLoop:
         access: SessionAccess,
         request_params: dict[str, Any] | None = None,
         stop_event: asyncio.Event | None = None,
+        initial_messages=None,
     ) -> AsyncIterator[AgentEvent]:
-        user_message = self.repository.append_message(
-            session_id,
-            MessageRole.USER,
-            content,
-            model_id=model_id,
-            thinking_strength=thinking_strength,
-            request_params=request_params,
-        )
-        first_turn = True
-        while True:
-            draft = self.repository.append_message(
+        if initial_messages is None:
+            user_message = self.repository.append_message(
                 session_id,
-                MessageRole.ASSISTANT,
-                "",
+                MessageRole.USER,
+                content,
                 model_id=model_id,
                 thinking_strength=thinking_strength,
                 request_params=request_params,
-                status=MessageStatus.STOPPED,
-                completion_marker=False,
             )
+            initial_draft = None
+        else:
+            user_message, initial_draft = initial_messages
+        first_turn = True
+        while True:
+            draft = initial_draft if first_turn else None
+            if draft is None:
+                draft = self.repository.append_message(
+                    session_id,
+                    MessageRole.ASSISTANT,
+                    "",
+                    model_id=model_id,
+                    thinking_strength=thinking_strength,
+                    request_params=request_params,
+                    status=MessageStatus.STOPPED,
+                    completion_marker=False,
+                )
             yield AgentEvent(
                 "turn_started",
                 {"messages": [user_message, draft] if first_turn else [draft]},

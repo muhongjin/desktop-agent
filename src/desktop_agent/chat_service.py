@@ -10,7 +10,7 @@ from PySide6.QtCore import Property, QAbstractListModel, QModelIndex, QObject, Q
 
 from desktop_agent.agent.loop import AgentLoop
 from desktop_agent.agent.prompt import PromptComposer
-from desktop_agent.domain.models import MessageRole
+from desktop_agent.domain.models import MessageRole, MessageStatus
 from desktop_agent.providers.openai_compatible import (
     AssistantTurn,
     OpenAICompatibleClient,
@@ -31,6 +31,7 @@ class MessageListModel(QAbstractListModel):
     ToolNameRole = Qt.UserRole + 5
     ToolStatusRole = Qt.UserRole + 6
     ToolInputRole = Qt.UserRole + 7
+    CompletionMarkerRole = Qt.UserRole + 8
 
     def __init__(self, repository):
         super().__init__()
@@ -49,6 +50,7 @@ class MessageListModel(QAbstractListModel):
             self.ToolNameRole: b"toolName",
             self.ToolStatusRole: b"toolStatus",
             self.ToolInputRole: b"toolInput",
+            self.CompletionMarkerRole: b"completionMarker",
         }
 
     def rowCount(self, parent=None):
@@ -65,6 +67,8 @@ class MessageListModel(QAbstractListModel):
             return message.content
         if role == self.StatusRole:
             return message.status.value
+        if role == self.CompletionMarkerRole:
+            return message.completion_marker
         if role == self.DetailsRole:
             return self.details.get(message.id, "")
         tool_run = self.tool_runs.get(message.id)
@@ -171,13 +175,45 @@ class ChatService(QObject):
     def sendMessage(self, content: str) -> None:
         if self._running or not content.strip() or not self.sessions.currentSessionId:
             return
+        content = content.strip()
+        session = self.repository.get_session(self.sessions.currentSessionId)
+        if session is None or not session.current_model_id:
+            return
+        provider_id, model_id = session.current_model_id.split(":", 1)
+        config = self.repository.get_provider_config(provider_id)
+        if config is None:
+            return
+        self._start_title_generation(session, content)
+        user_message = self.repository.append_message(
+            session.id,
+            MessageRole.USER,
+            content,
+            model_id=model_id,
+            thinking_strength=session.thinking_strength,
+        )
+        draft = self.repository.append_message(
+            session.id,
+            MessageRole.ASSISTANT,
+            "",
+            model_id=model_id,
+            thinking_strength=session.thinking_strength,
+            status=MessageStatus.STOPPED,
+            completion_marker=False,
+        )
+        self.messages.append_messages((user_message, draft))
         self._running = True
         self.runningChanged.emit()
         self._stop_event = asyncio.Event()
-        session_id = self.sessions.currentSessionId
-        content = content.strip()
-        self._start_title_generation(session_id, content)
-        self._task = asyncio.create_task(self._run(session_id, content))
+        self._task = asyncio.create_task(
+            self._run(
+                session,
+                content,
+                provider_id,
+                model_id,
+                config,
+                (user_message, draft),
+            )
+        )
         self._task.add_done_callback(self._finished)
 
     @Slot()
@@ -204,17 +240,31 @@ class ChatService(QObject):
     def clearSessionPermissions(self, session_id: str) -> None:
         self._session_permissions.pop(session_id, None)
 
-    async def _run(self, session_id: str, content: str) -> None:
+    async def _run(
+        self,
+        session,
+        content: str,
+        provider_id: str,
+        model_id: str,
+        config,
+        initial_messages,
+    ) -> None:
         await asyncio.sleep(0)
-        session = self.repository.get_session(session_id)
-        if session is None or not session.current_model_id:
+        try:
+            api_key = await asyncio.to_thread(self.credentials.get, provider_id)
+            provider = self.provider_factory(config.base_url, api_key)
+        except (KeyringError, OSError, RuntimeError, TypeError, ValueError) as error:
+            draft = initial_messages[1]
+            visible_error = f"错误：{error}"
+            self.repository.update_message(
+                draft.id,
+                visible_error,
+                MessageStatus.STOPPED,
+                completion_marker=True,
+            )
+            if self.sessions.currentSessionId == session.id:
+                self.messages.update_message_content(draft.id, visible_error)
             return
-        provider_id, model_id = session.current_model_id.split(":", 1)
-        config = self.repository.get_provider_config(provider_id)
-        if config is None:
-            return
-        api_key = await asyncio.to_thread(self.credentials.get, provider_id)
-        provider = self.provider_factory(config.base_url, api_key)
         access = self._access(session)
         files = FileTools(self.permission_broker, access)
         registry = {} if self.safe_mode else file_tool_registry(files)
@@ -242,6 +292,7 @@ class ChatService(QObject):
                 thinking_strength=session.thinking_strength,
                 access=access,
                 stop_event=self._stop_event,
+                initial_messages=initial_messages,
             ):
                 if self.sessions.currentSessionId == session.id:
                     if event.type == "turn_started":
@@ -259,13 +310,11 @@ class ChatService(QObject):
             self._active_session_id = ""
             await provider.close()
 
-    def _start_title_generation(self, session_id: str, content: str) -> None:
-        session = self.repository.get_session(session_id)
+    def _start_title_generation(self, session, content: str) -> None:
         if (
-            session is None
-            or session.title != "新对话"
+            session.title != "新对话"
             or not session.current_model_id
-            or self.repository.session_has_messages(session_id)
+            or self.repository.session_has_messages(session.id)
         ):
             return
         task = asyncio.create_task(self._generate_title(session, content))

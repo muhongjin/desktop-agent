@@ -291,6 +291,7 @@ ApplicationWindow {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 hasSession: sessionService.hasCurrentSession
+                running: chatService.running
                 model: chatService.messageModel
             }
 

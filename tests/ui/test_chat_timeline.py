@@ -2,9 +2,14 @@ from pathlib import Path
 
 import pytest
 from PySide6.QtCore import QObject, Qt, QUrl
-from PySide6.QtQml import QQmlComponent, QQmlEngine
+from PySide6.QtQml import QQmlComponent, QQmlEngine, QQmlExpression
 from PySide6.QtQuick import QQuickView
 from PySide6.QtTest import QTest
+
+from desktop_agent.chat_service import MessageListModel
+from desktop_agent.domain.models import MessageRole, MessageStatus
+from desktop_agent.storage.database import Database
+from desktop_agent.storage.repositories import Repository
 
 COMPONENTS = (
     Path(__file__).parents[2] / "src" / "desktop_agent" / "ui" / "components"
@@ -106,3 +111,45 @@ def test_chat_timeline_exposes_tail_follow_controls_and_keyboard(qapp):
     assert chat.property("pendingNewContent") is False
     view.close()
     view.deleteLater()
+
+
+def test_pending_assistant_shows_thinking_until_first_token(qapp, tmp_path):
+    database = Database(tmp_path / "agent.sqlite3")
+    repository = Repository(database)
+    session = repository.create_session("Draft", str(tmp_path / "workspace"))
+    repository.append_message(session.id, MessageRole.USER, "hello")
+    draft = repository.append_message(
+        session.id,
+        MessageRole.ASSISTANT,
+        "",
+        status=MessageStatus.STOPPED,
+        completion_marker=False,
+    )
+    model = MessageListModel(repository)
+    model.load(session.id)
+
+    view = QQuickView()
+    view.setResizeMode(QQuickView.SizeRootObjectToView)
+    view.setInitialProperties({"model": model, "running": True})
+    view.setSource(QUrl.fromLocalFile(str(COMPONENTS / "ChatView.qml")))
+    view.resize(480, 320)
+    view.show()
+    chat = view.rootObject()
+    qapp.processEvents()
+
+    context = QQmlEngine.contextForObject(chat)
+    delegate, is_undefined = QQmlExpression(
+        context, chat, "timeline.itemAtIndex(1)"
+    ).evaluate()
+    assert is_undefined is False
+    indicator = delegate.findChild(QObject, "thinkingIndicator")
+    assert indicator is not None
+    assert indicator.property("visible") is True
+
+    model.update_message_content(draft.id, "首个 token")
+    qapp.processEvents()
+    assert indicator.property("visible") is False
+
+    view.close()
+    view.deleteLater()
+    database.close()

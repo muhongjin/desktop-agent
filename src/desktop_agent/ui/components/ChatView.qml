@@ -8,6 +8,7 @@ FocusScope {
     id: root
 
     property bool hasSession: false
+    property bool running: false
     property alias model: messageList.model
     property alias timeline: messageList
     property bool followingTail: true
@@ -83,6 +84,7 @@ FocusScope {
             required property string toolName
             required property string toolStatus
             required property string toolInput
+            required property bool completionMarker
 
             width: ListView.view.width
             implicitHeight: messageColumn.implicitHeight
@@ -116,6 +118,31 @@ FocusScope {
                     font.family: Theme.fontFamily
                     font.pixelSize: Theme.fontBody
                     Layout.fillWidth: true
+                }
+
+                RowLayout {
+                    id: thinkingIndicator
+                    objectName: "thinkingIndicator"
+                    visible: root.running
+                            && messageDelegate.role === "assistant"
+                            && messageDelegate.content.length === 0
+                            && !messageDelegate.completionMarker
+                    spacing: Theme.space8
+                    Layout.fillWidth: true
+
+                    BusyIndicator {
+                        running: thinkingIndicator.visible
+                        Layout.preferredWidth: Theme.space20
+                        Layout.preferredHeight: Theme.space20
+                    }
+
+                    Label {
+                        text: qsTr("正在思考")
+                        color: Theme.textMuted
+                        font.family: Theme.fontFamily
+                        font.pixelSize: Theme.fontBody
+                        Layout.alignment: Qt.AlignVCenter
+                    }
                 }
 
                 ToolRunSummary {

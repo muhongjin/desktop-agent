@@ -39,6 +39,11 @@ class SlowCredentials:
         return "secret"
 
 
+class FailingCredentials:
+    def get(self, provider_id):
+        raise RuntimeError("credential store unavailable")
+
+
 class Provider:
     def __init__(self):
         self.requests = []
@@ -154,6 +159,18 @@ async def test_send_returns_immediately_and_streaming_does_not_reload_per_delta(
     started = time.perf_counter()
     service.sendMessage("hi")
     elapsed = time.perf_counter() - started
+
+    assert service.messageModel.rowCount() == 2
+    assert service.messageModel.data(
+        service.messageModel.index(0, 0), service.messageModel.ContentRole
+    ) == "hi"
+    assert service.messageModel.data(
+        service.messageModel.index(1, 0), service.messageModel.ContentRole
+    ) == ""
+    assert service.messageModel.data(
+        service.messageModel.index(1, 0), service.messageModel.CompletionMarkerRole
+    ) is False
+
     while service.running:
         await asyncio.sleep(0.01)
 
@@ -213,6 +230,39 @@ async def test_first_message_generates_title_without_blocking_main_response(tmp_
     while service.running:
         await asyncio.sleep(0.01)
     assert len(title_provider.requests) == 1
+    database.close()
+
+
+@pytest.mark.asyncio
+async def test_credential_failure_finishes_optimistic_draft(tmp_path):
+    database = Database(tmp_path / "agent.sqlite3")
+    repo = Repository(database)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    session = repo.create_session("Draft", str(workspace), current_model_id="openai:model-a")
+    now = datetime.now(UTC)
+    repo.set_provider_config(
+        ProviderConfig(
+            "openai", "OpenAI", "https://example.test/v1", {"models": ["model-a"]}, now, now
+        )
+    )
+    service = ChatService(
+        repo,
+        Sessions(session.id),
+        None,
+        Settings(),
+        PermissionBroker(),
+        FailingCredentials(),
+        safe_mode=True,
+    )
+
+    service.sendMessage("hi")
+    while service.running:
+        await asyncio.sleep(0.01)
+
+    draft = repo.list_messages(session.id)[-1]
+    assert "credential store unavailable" in draft.content
+    assert draft.completion_marker is True
     database.close()
 
 

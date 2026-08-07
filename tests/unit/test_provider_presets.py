@@ -2,7 +2,17 @@ from desktop_agent.providers.presets import PROVIDER_PRESETS
 
 
 def test_all_provider_presets_have_required_metadata():
-    expected = {"openai", "gemini", "openrouter", "ollama", "deepseek", "bailian", "moonshot", "zhipu", "siliconflow"}
+    expected = {
+        "openai",
+        "gemini",
+        "openrouter",
+        "ollama",
+        "deepseek",
+        "bailian",
+        "moonshot",
+        "zhipu",
+        "siliconflow",
+    }
     assert {preset.id for preset in PROVIDER_PRESETS} == expected
     for preset in PROVIDER_PRESETS:
         assert preset.display_name

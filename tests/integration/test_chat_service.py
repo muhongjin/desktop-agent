@@ -53,7 +53,11 @@ async def test_chat_service_runs_real_loop_and_safe_mode_hides_tools(tmp_path):
     workspace.mkdir()
     session = repo.create_session("Draft", str(workspace), current_model_id="openai:model-a")
     now = datetime.now(UTC)
-    repo.set_provider_config(ProviderConfig("openai", "OpenAI", "https://example.test/v1", {"models": ["model-a"]}, now, now))
+    repo.set_provider_config(
+        ProviderConfig(
+            "openai", "OpenAI", "https://example.test/v1", {"models": ["model-a"]}, now, now
+        )
+    )
     provider = Provider()
     service = ChatService(
         repo,

@@ -35,7 +35,9 @@ class AgentEvent:
     data: dict[str, Any]
 
 
-PermissionHandler = Callable[[PermissionRequest, RegisteredTool, dict[str, Any]], Awaitable[bool] | bool]
+PermissionHandler = Callable[
+    [PermissionRequest, RegisteredTool, dict[str, Any]], Awaitable[bool] | bool
+]
 
 
 class AgentLoop:
@@ -86,12 +88,17 @@ class AgentLoop:
                 completion_marker=False,
             )
             session = self.repository.get_session(session_id)
-            history = [message for message in self.repository.list_messages(session_id) if message.id != draft.id]
+            history = [
+                message
+                for message in self.repository.list_messages(session_id)
+                if message.id != draft.id
+            ]
             enabled_tools = [
                 tool
                 for tool in self.tool_registry.values()
                 if self.permission_broker.evaluate(
-                    PermissionRequest(tool.capability, access.workspace.resolve(strict=False)), access
+                    PermissionRequest(tool.capability, access.workspace.resolve(strict=False)),
+                    access,
                 )
                 is not PermissionDecision.DENY
             ]
@@ -122,11 +129,15 @@ class AgentLoop:
                     elif isinstance(event, AssistantTurn):
                         final_turn = event
             except TurnStopped:
-                self.repository.update_message(draft.id, accumulated, MessageStatus.STOPPED, completion_marker=True)
+                self.repository.update_message(
+                    draft.id, accumulated, MessageStatus.STOPPED, completion_marker=True
+                )
                 yield AgentEvent("turn_stopped", {"message_id": draft.id})
                 return
             except ProviderError as error:
-                visible_error = f"{accumulated}\n\n错误：{error}" if accumulated else f"错误：{error}"
+                visible_error = (
+                    f"{accumulated}\n\n错误：{error}" if accumulated else f"错误：{error}"
+                )
                 self.repository.update_message(
                     draft.id, visible_error, MessageStatus.STOPPED, completion_marker=True
                 )
@@ -134,8 +145,13 @@ class AgentLoop:
                 return
 
             if final_turn is None:
-                self.repository.update_message(draft.id, accumulated, MessageStatus.STOPPED, completion_marker=True)
-                yield AgentEvent("turn_stopped", {"message_id": draft.id, "error": "Provider stream ended unexpectedly"})
+                self.repository.update_message(
+                    draft.id, accumulated, MessageStatus.STOPPED, completion_marker=True
+                )
+                yield AgentEvent(
+                    "turn_stopped",
+                    {"message_id": draft.id, "error": "Provider stream ended unexpectedly"},
+                )
                 return
 
             if not final_turn.tool_calls:
@@ -170,7 +186,9 @@ class AgentLoop:
         try:
             arguments = json.loads(call.arguments or "{}")
         except json.JSONDecodeError as error:
-            async for event in self._record_tool_failure(session_id, call, {}, f"Invalid tool arguments: {error}"):
+            async for event in self._record_tool_failure(
+                session_id, call, {}, f"Invalid tool arguments: {error}"
+            ):
                 yield event
             return
         if not isinstance(arguments, dict):
@@ -180,7 +198,9 @@ class AgentLoop:
                 yield event
             return
         if tool is None:
-            async for event in self._record_tool_failure(session_id, call, arguments, f"Unknown tool: {call.name}"):
+            async for event in self._record_tool_failure(
+                session_id, call, arguments, f"Unknown tool: {call.name}"
+            ):
                 yield event
             return
         target = Path(arguments.get(tool.path_argument, access.workspace)).expanduser()
@@ -204,11 +224,15 @@ class AgentLoop:
                 yield AgentEvent("turn_stopped", {"tool_call_id": call.id})
                 return
             if not confirmed:
-                async for event in self._record_tool_failure(session_id, call, arguments, "Permission denied"):
+                async for event in self._record_tool_failure(
+                    session_id, call, arguments, "Permission denied"
+                ):
                     yield event
                 return
         elif decision is PermissionDecision.DENY:
-            async for event in self._record_tool_failure(session_id, call, arguments, "Permission denied"):
+            async for event in self._record_tool_failure(
+                session_id, call, arguments, "Permission denied"
+            ):
                 yield event
             return
 
@@ -217,12 +241,19 @@ class AgentLoop:
             invoke_arguments = dict(arguments)
             if confirmed and "confirmed" in inspect.signature(tool.callable).parameters:
                 invoke_arguments["confirmed"] = True
-            if stop_event is not None and "stop_event" in inspect.signature(tool.callable).parameters:
+            if (
+                stop_event is not None
+                and "stop_event" in inspect.signature(tool.callable).parameters
+            ):
                 invoke_arguments["stop_event"] = stop_event
             result = tool.callable(**invoke_arguments)
             result = await result if inspect.isawaitable(result) else result
             normalized, raw = self._normalize_result(result)
-            status = ToolRunStatus.CANCELLED if getattr(result, "cancelled", False) else ToolRunStatus.COMPLETED
+            status = (
+                ToolRunStatus.CANCELLED
+                if getattr(result, "cancelled", False)
+                else ToolRunStatus.COMPLETED
+            )
         except (OSError, TypeError, ValueError, RuntimeError) as error:
             normalized, raw, status = f"Tool failed: {error}", str(error), ToolRunStatus.FAILED
         self.repository.append_tool_run(session_id, tool.name, arguments, raw, status)
@@ -234,7 +265,12 @@ class AgentLoop:
         )
         yield AgentEvent(
             "tool_finished",
-            {"tool_call_id": call.id, "tool": tool.name, "status": status.value, "output": normalized},
+            {
+                "tool_call_id": call.id,
+                "tool": tool.name,
+                "status": status.value,
+                "output": normalized,
+            },
         )
         if status is ToolRunStatus.CANCELLED:
             yield AgentEvent("turn_stopped", {"tool_call_id": call.id})
@@ -242,11 +278,18 @@ class AgentLoop:
     async def _record_tool_failure(
         self, session_id: str, call: ToolCall, arguments: dict[str, Any], error: str
     ) -> AsyncIterator[AgentEvent]:
-        self.repository.append_tool_run(session_id, call.name, arguments, error, ToolRunStatus.FAILED)
+        self.repository.append_tool_run(
+            session_id, call.name, arguments, error, ToolRunStatus.FAILED
+        )
         self.repository.append_message(session_id, MessageRole.TOOL, error, tool_call_id=call.id)
         yield AgentEvent(
             "tool_finished",
-            {"tool_call_id": call.id, "tool": call.name, "status": ToolRunStatus.FAILED.value, "output": error},
+            {
+                "tool_call_id": call.id,
+                "tool": call.name,
+                "status": ToolRunStatus.FAILED.value,
+                "output": error,
+            },
         )
 
     async def _stream_until_stopped(self, stream, stop_event: asyncio.Event | None):
@@ -258,7 +301,9 @@ class AgentLoop:
                 if stop_waiter is None:
                     yield await next_event
                     continue
-                done, _ = await asyncio.wait({next_event, stop_waiter}, return_when=asyncio.FIRST_COMPLETED)
+                done, _ = await asyncio.wait(
+                    {next_event, stop_waiter}, return_when=asyncio.FIRST_COMPLETED
+                )
                 if stop_waiter in done and stop_event.is_set():
                     if not next_event.done():
                         next_event.cancel()

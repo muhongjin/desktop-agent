@@ -26,7 +26,9 @@ class FileTools:
 
     def list_files(self, path: str | Path) -> ToolResult:
         target = self._authorize("fs.read", path)
-        entries = [item.name for item in sorted(target.iterdir(), key=lambda item: item.name.casefold())]
+        entries = [
+            item.name for item in sorted(target.iterdir(), key=lambda item: item.name.casefold())
+        ]
         return ToolResult(str(target), 0, f"listed {len(entries)} entries", entries)
 
     def read_file(self, path: str | Path, encoding: str = "utf-8") -> ToolResult:
@@ -39,7 +41,9 @@ class FileTools:
         target.parent.mkdir(parents=True, exist_ok=True)
         existed = target.exists()
         previous_size = target.stat().st_size if existed else 0
-        handle, temporary_name = tempfile.mkstemp(prefix=f".{target.name}.", suffix=".tmp", dir=target.parent)
+        handle, temporary_name = tempfile.mkstemp(
+            prefix=f".{target.name}.", suffix=".tmp", dir=target.parent
+        )
         temporary = Path(temporary_name)
         try:
             with os.fdopen(handle, "w", encoding=encoding, newline="") as stream:
@@ -52,7 +56,9 @@ class FileTools:
             raise
         byte_count = len(content.encode(encoding))
         action = "updated" if existed else "created"
-        return ToolResult(str(target), byte_count, f"{action} file ({previous_size} -> {byte_count} bytes)")
+        return ToolResult(
+            str(target), byte_count, f"{action} file ({previous_size} -> {byte_count} bytes)"
+        )
 
     def delete_path(self, path: str | Path, *, confirmed: bool = False) -> ToolResult:
         target = self._authorize("fs.delete", path, confirmed=confirmed)

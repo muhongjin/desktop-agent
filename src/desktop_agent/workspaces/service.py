@@ -18,7 +18,12 @@ class Send2TrashAdapter:
 
 
 class WorkspaceService:
-    def __init__(self, root_dir: str | Path, session_repository, recycle_bin_adapter: RecycleBinAdapter | None = None):
+    def __init__(
+        self,
+        root_dir: str | Path,
+        session_repository,
+        recycle_bin_adapter: RecycleBinAdapter | None = None,
+    ):
         self.root_dir = Path(root_dir).expanduser().resolve()
         self.root_dir.mkdir(parents=True, exist_ok=True)
         self.session_repository = session_repository

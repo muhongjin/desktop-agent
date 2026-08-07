@@ -80,7 +80,9 @@ def test_delete_never_uses_associated_external_directory(service, tmp_path):
 
 
 def test_local_paths_uses_platformdirs(monkeypatch, tmp_path):
-    monkeypatch.setattr("desktop_agent.settings.user_data_dir", lambda app_name: str(tmp_path / app_name))
+    monkeypatch.setattr(
+        "desktop_agent.settings.user_data_dir", lambda app_name: str(tmp_path / app_name)
+    )
     from desktop_agent.settings import local_paths
 
     paths = local_paths("TestAgent")

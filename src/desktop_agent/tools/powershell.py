@@ -79,7 +79,9 @@ class PowerShellExecutor:
             if stop_waiter is None:
                 stdout, stderr = await communication
             else:
-                done, _ = await asyncio.wait({communication, stop_waiter}, return_when=asyncio.FIRST_COMPLETED)
+                done, _ = await asyncio.wait(
+                    {communication, stop_waiter}, return_when=asyncio.FIRST_COMPLETED
+                )
                 if stop_waiter in done and stop_event.is_set() and not communication.done():
                     cancelled = True
                     self.stop()
@@ -112,9 +114,15 @@ class PowerShellExecutor:
         import win32job
 
         job = win32job.CreateJobObject(None, "")
-        information = win32job.QueryInformationJobObject(job, win32job.JobObjectExtendedLimitInformation)
-        information["BasicLimitInformation"]["LimitFlags"] |= win32job.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
-        win32job.SetInformationJobObject(job, win32job.JobObjectExtendedLimitInformation, information)
+        information = win32job.QueryInformationJobObject(
+            job, win32job.JobObjectExtendedLimitInformation
+        )
+        information["BasicLimitInformation"]["LimitFlags"] |= (
+            win32job.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        )
+        win32job.SetInformationJobObject(
+            job, win32job.JobObjectExtendedLimitInformation, information
+        )
         access = win32con.PROCESS_SET_QUOTA | win32con.PROCESS_TERMINATE
         process_handle = win32api.OpenProcess(access, False, process_id)
         try:

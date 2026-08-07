@@ -34,7 +34,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     event_loop = qasync.QEventLoop(application)
     asyncio.set_event_loop(event_loop)
     with event_loop:
-        _application_engine = event_loop.run_until_complete(build_application(safe_mode=args.safe_mode))
+        _application_engine = event_loop.run_until_complete(
+            build_application(safe_mode=args.safe_mode)
+        )
         event_loop.run_forever()
     return 0
 

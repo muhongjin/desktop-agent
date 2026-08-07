@@ -15,4 +15,6 @@ class LocalPaths:
 
 def local_paths(app_name: str = APP_NAME) -> LocalPaths:
     data_dir = Path(user_data_dir(app_name))
-    return LocalPaths(data_dir=data_dir, database=data_dir / "agent.sqlite3", workspaces=data_dir / "workspaces")
+    return LocalPaths(
+        data_dir=data_dir, database=data_dir / "agent.sqlite3", workspaces=data_dir / "workspaces"
+    )

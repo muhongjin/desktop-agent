@@ -26,7 +26,9 @@ class InvalidSessionState(RepositoryError):
     pass
 
 
-_SECRET_KEY = re.compile(r"(?:key|token|secret|password|passwd|authorization|cookie)", re.IGNORECASE)
+_SECRET_KEY = re.compile(
+    r"(?:key|token|secret|password|passwd|authorization|cookie)", re.IGNORECASE
+)
 
 
 def _now() -> str:
@@ -39,7 +41,11 @@ def _id() -> str:
 
 def _safe_params(value: Any) -> Any:
     if isinstance(value, dict):
-        return {str(key): _safe_params(item) for key, item in value.items() if not _SECRET_KEY.search(str(key))}
+        return {
+            str(key): _safe_params(item)
+            for key, item in value.items()
+            if not _SECRET_KEY.search(str(key))
+        }
     if isinstance(value, list):
         return [_safe_params(item) for item in value]
     if isinstance(value, tuple):
@@ -108,14 +114,19 @@ class Repository:
 
     def list_sessions(self, status: SessionStatus | None = None) -> list[Session]:
         if status is None:
-            rows = self.database.execute("SELECT id FROM sessions ORDER BY updated_at DESC, rowid DESC").fetchall()
+            rows = self.database.execute(
+                "SELECT id FROM sessions ORDER BY updated_at DESC, rowid DESC"
+            ).fetchall()
         else:
             rows = self.database.execute(
-                "SELECT id FROM sessions WHERE status = ? ORDER BY updated_at DESC, rowid DESC", (status,)
+                "SELECT id FROM sessions WHERE status = ? ORDER BY updated_at DESC, rowid DESC",
+                (status,),
             ).fetchall()
         return [self.get_session(row["id"]) for row in rows]
 
-    def _set_session_status(self, session_id: str, expected: SessionStatus, target: SessionStatus) -> Session:
+    def _set_session_status(
+        self, session_id: str, expected: SessionStatus, target: SessionStatus
+    ) -> Session:
         now = _now()
         with self.database.transaction():
             cursor = self.database.execute(
@@ -306,7 +317,8 @@ class Repository:
 
     def list_tool_runs(self, session_id: str) -> list[ToolRun]:
         rows = self.database.execute(
-            "SELECT id FROM tool_runs WHERE session_id = ? ORDER BY created_at, rowid", (session_id,)
+            "SELECT id FROM tool_runs WHERE session_id = ? ORDER BY created_at, rowid",
+            (session_id,),
         ).fetchall()
         return [self._get_tool_run(row["id"]) for row in rows]
 
@@ -342,7 +354,9 @@ class Repository:
         )
 
     def list_provider_configs(self) -> list[ProviderConfig]:
-        rows = self.database.execute("SELECT provider_id FROM provider_configs ORDER BY display_name").fetchall()
+        rows = self.database.execute(
+            "SELECT provider_id FROM provider_configs ORDER BY display_name"
+        ).fetchall()
         return [self.get_provider_config(row["provider_id"]) for row in rows]
 
     def set_app_setting(self, key: str, value: Any) -> None:
@@ -357,4 +371,8 @@ class Repository:
         row = self.database.execute("SELECT * FROM app_settings WHERE key = ?", (key,)).fetchone()
         if row is None:
             return None
-        return AppSetting(key=row["key"], value=json.loads(row["value_json"]), updated_at=_timestamp(row["updated_at"]))
+        return AppSetting(
+            key=row["key"],
+            value=json.loads(row["value_json"]),
+            updated_at=_timestamp(row["updated_at"]),
+        )

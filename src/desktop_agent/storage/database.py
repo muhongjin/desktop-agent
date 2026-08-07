@@ -76,10 +76,16 @@ class Database:
         if "thinking_strength" not in columns:
             self.connection.execute("ALTER TABLE sessions ADD COLUMN thinking_strength TEXT")
         if "execution_mode" not in columns:
-            self.connection.execute("ALTER TABLE sessions ADD COLUMN execution_mode TEXT NOT NULL DEFAULT 'local'")
-        message_columns = {row["name"] for row in self.connection.execute("PRAGMA table_info(messages)")}
+            self.connection.execute(
+                "ALTER TABLE sessions ADD COLUMN execution_mode TEXT NOT NULL DEFAULT 'local'"
+            )
+        message_columns = {
+            row["name"] for row in self.connection.execute("PRAGMA table_info(messages)")
+        }
         if "tool_calls_json" not in message_columns:
-            self.connection.execute("ALTER TABLE messages ADD COLUMN tool_calls_json TEXT NOT NULL DEFAULT '[]'")
+            self.connection.execute(
+                "ALTER TABLE messages ADD COLUMN tool_calls_json TEXT NOT NULL DEFAULT '[]'"
+            )
         if "tool_call_id" not in message_columns:
             self.connection.execute("ALTER TABLE messages ADD COLUMN tool_call_id TEXT")
         self.connection.commit()

@@ -84,8 +84,15 @@ async def test_tool_call_passes_permission_and_persists_context(loop_context):
         )
     ]
     assert (access.workspace / "answer.txt").read_text() == "42"
-    assert [event.type for event in events] == ["tool_started", "tool_finished", "text_delta", "turn_finished"]
-    tool_message = next(message for message in repo.list_messages(session.id) if message.role is MessageRole.TOOL)
+    assert [event.type for event in events] == [
+        "tool_started",
+        "tool_finished",
+        "text_delta",
+        "turn_finished",
+    ]
+    tool_message = next(
+        message for message in repo.list_messages(session.id) if message.role is MessageRole.TOOL
+    )
     assert tool_message.tool_call_id == "call-1"
     assert repo.list_tool_runs(session.id)[0].status is ToolRunStatus.COMPLETED
     followup = provider.requests[1]["messages"]

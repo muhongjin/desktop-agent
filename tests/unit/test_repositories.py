@@ -39,7 +39,9 @@ def test_archive_and_restore_only_change_status(repository, tmp_path):
 def test_delete_archived_session_cascades_related_rows(repository, tmp_path):
     session = repository.create_session("Draft", str(tmp_path))
     repository.append_message(session.id, MessageRole.USER, "hello")
-    repository.append_tool_run(session.id, "shell", {"command": "Get-Date"}, "output", ToolRunStatus.COMPLETED)
+    repository.append_tool_run(
+        session.id, "shell", {"command": "Get-Date"}, "output", ToolRunStatus.COMPLETED
+    )
 
     with pytest.raises(InvalidSessionState):
         repository.delete_session(session.id)
@@ -61,7 +63,11 @@ def test_assistant_message_persists_metadata_without_secrets(repository, tmp_pat
         "draft",
         model_id="gpt-5",
         thinking_strength="high",
-        request_params={"temperature": 0.2, "api_key": "hidden", "nested": {"token": "nope", "top_p": 0.8}},
+        request_params={
+            "temperature": 0.2,
+            "api_key": "hidden",
+            "nested": {"token": "nope", "top_p": 0.8},
+        },
         status=MessageStatus.STOPPED,
         completion_marker=False,
     )
@@ -79,7 +85,9 @@ def test_tool_context_and_raw_output_are_stored_separately(repository, tmp_path)
 
     context = {"command": "Get-Date", "metadata": {"cwd": "C:\\work"}}
     message = repository.append_message(session.id, MessageRole.TOOL, context)
-    run = repository.append_tool_run(session.id, "shell", context, "raw\noutput", ToolRunStatus.FAILED)
+    run = repository.append_tool_run(
+        session.id, "shell", context, "raw\noutput", ToolRunStatus.FAILED
+    )
 
     assert json.loads(message.content) == context
     assert json.loads(run.input_json) == context

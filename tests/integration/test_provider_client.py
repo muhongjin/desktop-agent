@@ -43,7 +43,11 @@ async def test_stream_chat_yields_text_and_final_turn():
     async with httpx.AsyncClient(transport=transport) as http:
         client = OpenAICompatibleClient("https://example.test/v1", client=http)
         result = [event async for event in client.stream_chat(model_id="model-a", messages=[])]
-    assert result == [TextDelta("hello "), TextDelta("world"), AssistantTurn("hello world", (), "stop")]
+    assert result == [
+        TextDelta("hello "),
+        TextDelta("world"),
+        AssistantTurn("hello world", (), "stop"),
+    ]
 
 
 @pytest.mark.asyncio
@@ -52,7 +56,9 @@ async def test_stream_chat_collects_tool_call_fragments():
         {
             "choices": [
                 {
-                    "delta": {"tool_calls": [{"index": 0, "id": "call-1", "function": {"name": "list_"}}]},
+                    "delta": {
+                        "tool_calls": [{"index": 0, "id": "call-1", "function": {"name": "list_"}}]
+                    },
                     "finish_reason": None,
                 }
             ]
@@ -60,7 +66,11 @@ async def test_stream_chat_collects_tool_call_fragments():
         {
             "choices": [
                 {
-                    "delta": {"tool_calls": [{"index": 0, "function": {"name": "files", "arguments": '{"path":'}}]},
+                    "delta": {
+                        "tool_calls": [
+                            {"index": 0, "function": {"name": "files", "arguments": '{"path":'}}
+                        ]
+                    },
                     "finish_reason": None,
                 }
             ]

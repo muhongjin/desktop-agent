@@ -70,9 +70,15 @@ class OpenAICompatibleClient:
             response.raise_for_status()
             payload = response.json()
             models = payload.get("data", [])
-            return [item["id"] for item in models if isinstance(item, dict) and isinstance(item.get("id"), str)]
+            return [
+                item["id"]
+                for item in models
+                if isinstance(item, dict) and isinstance(item.get("id"), str)
+            ]
         except httpx.TimeoutException as error:
-            raise ModelDiscoveryError("Model discovery timed out; enter a model ID manually") from error
+            raise ModelDiscoveryError(
+                "Model discovery timed out; enter a model ID manually"
+            ) from error
         except (httpx.HTTPError, ValueError, TypeError) as error:
             detail = self._safe_error("Model discovery failed", error)
             raise ModelDiscoveryError(f"{detail}; enter a model ID manually") from error
@@ -137,7 +143,10 @@ class OpenAICompatibleClient:
             raise ProviderError(self._safe_error("Provider request failed", error)) from error
         except (httpx.HTTPError, json.JSONDecodeError, TypeError, ValueError) as error:
             raise ProviderError(self._safe_error("Invalid provider response", error)) from error
-        tool_calls = tuple(ToolCall(value["id"], value["name"], value["arguments"]) for _, value in sorted(calls.items()))
+        tool_calls = tuple(
+            ToolCall(value["id"], value["name"], value["arguments"])
+            for _, value in sorted(calls.items())
+        )
         yield AssistantTurn("".join(text_parts), tool_calls, finish_reason)
 
     def _safe_error(self, prefix: str, error: Exception) -> str:

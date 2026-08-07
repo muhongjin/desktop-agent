@@ -28,7 +28,12 @@ class PromptComposer:
         associated_directory: str | Path | None = None,
         tools: list[dict[str, Any]] | tuple[dict[str, Any], ...] = (),
     ) -> PromptRequest:
-        kernel = files("desktop_agent.resources").joinpath("kernel.md").read_text(encoding="utf-8").strip()
+        kernel = (
+            files("desktop_agent.resources")
+            .joinpath("kernel.md")
+            .read_text(encoding="utf-8")
+            .strip()
+        )
         messages: list[dict[str, Any]] = [{"role": "system", "content": kernel}]
         if self.global_prompt.strip():
             messages.append({"role": "system", "content": self.global_prompt.strip()})

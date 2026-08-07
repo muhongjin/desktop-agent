@@ -35,10 +35,14 @@ def test_tool_call_protocol_is_reconstructed(tmp_path):
     database = Database(tmp_path / "agent.sqlite3")
     repo = Repository(database)
     session = repo.create_session("Draft", str(tmp_path / "workspace"))
-    calls = [{"id": "call-1", "type": "function", "function": {"name": "read_file", "arguments": "{}"}}]
+    calls = [
+        {"id": "call-1", "type": "function", "function": {"name": "read_file", "arguments": "{}"}}
+    ]
     repo.append_message(session.id, MessageRole.ASSISTANT, "", tool_calls=calls)
     repo.append_message(session.id, MessageRole.TOOL, "result", tool_call_id="call-1")
-    request = PromptComposer().compose(repo.list_messages(session.id), workspace=session.workspace_path)
+    request = PromptComposer().compose(
+        repo.list_messages(session.id), workspace=session.workspace_path
+    )
     database.close()
     assert request.messages[1]["tool_calls"] == calls
     assert request.messages[2]["tool_call_id"] == "call-1"

@@ -64,7 +64,9 @@ class SessionService(QObject):
     currentSessionChanged = Signal()
     sessionArchived = Signal()
 
-    def __init__(self, repository: Repository, workspaces: WorkspaceService, settings: SettingsService):
+    def __init__(
+        self, repository: Repository, workspaces: WorkspaceService, settings: SettingsService
+    ):
         super().__init__()
         self.repository = repository
         self.workspaces = workspaces
@@ -160,7 +162,9 @@ class SessionService(QObject):
     def setThinkingStrength(self, value: str) -> None:
         if not self._current_session_id:
             return
-        self.repository.update_session_preferences(self._current_session_id, thinking_strength=value)
+        self.repository.update_session_preferences(
+            self._current_session_id, thinking_strength=value
+        )
         self.settings.setValue("recent_thinking_strength", value)
         self.currentSessionChanged.emit()
 
@@ -189,7 +193,13 @@ class SessionService(QObject):
 
 
 class ApplicationServices(QObject):
-    def __init__(self, paths: LocalPaths, repository: Repository, workspaces: WorkspaceService, safe_mode=False):
+    def __init__(
+        self,
+        paths: LocalPaths,
+        repository: Repository,
+        workspaces: WorkspaceService,
+        safe_mode=False,
+    ):
         super().__init__()
         self.paths = paths
         self.repository = repository

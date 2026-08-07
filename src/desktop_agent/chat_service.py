@@ -18,18 +18,21 @@ class MessageListModel(QAbstractListModel):
     RoleRole = Qt.UserRole + 1
     ContentRole = Qt.UserRole + 2
     StatusRole = Qt.UserRole + 3
+    DetailsRole = Qt.UserRole + 4
 
     def __init__(self, repository):
         super().__init__()
         self.repository = repository
         self.session_id = ""
         self.messages = []
+        self.details = {}
 
     def roleNames(self):
         return {
             self.RoleRole: b"role",
             self.ContentRole: b"content",
             self.StatusRole: b"status",
+            self.DetailsRole: b"details",
         }
 
     def rowCount(self, parent=None):
@@ -49,12 +52,22 @@ class MessageListModel(QAbstractListModel):
             return content
         if role == self.StatusRole:
             return message.status.value
+        if role == self.DetailsRole:
+            return self.details.get(message.id, "")
         return None
 
     def load(self, session_id: str) -> None:
         self.beginResetModel()
         self.session_id = session_id
         self.messages = self.repository.list_messages(session_id) if session_id else []
+        self.details = {}
+        if session_id:
+            runs = iter(self.repository.list_tool_runs(session_id))
+            for message in self.messages:
+                if message.role is MessageRole.TOOL:
+                    run = next(runs, None)
+                    if run is not None:
+                        self.details[message.id] = run.raw_output
         self.endResetModel()
 
 

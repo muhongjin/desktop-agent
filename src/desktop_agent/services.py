@@ -12,7 +12,12 @@ from desktop_agent.providers.presets import PRESETS_BY_ID, PROVIDER_PRESETS
 
 
 def default_system_prompt() -> str:
-    return files("desktop_agent.resources").joinpath("default_system_prompt.md").read_text(encoding="utf-8").strip()
+    return (
+        files("desktop_agent.resources")
+        .joinpath("default_system_prompt.md")
+        .read_text(encoding="utf-8")
+        .strip()
+    )
 
 
 class SettingsService(QObject):

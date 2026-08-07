@@ -27,6 +27,8 @@ async def test_main_window_exposes_confirmed_controls(qapp, tmp_path):
     }
     found = {name for name in expected if root.findChild(QObject, name) is not None}
     assert found == expected
+    assert root.property("title") == "Desktop Agent"
+    assert engine._services.sessions.currentSessionTitle == ""
     root.close()
     engine.deleteLater()
 

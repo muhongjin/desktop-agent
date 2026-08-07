@@ -148,6 +148,30 @@ class Repository:
             )
         return self.get_session(session_id)
 
+    def set_unique_session_title(
+        self, session_id: str, title: str, max_length: int = 24
+    ) -> Session:
+        normalized = title.strip()
+        if not normalized:
+            raise ValueError("Session title cannot be empty")
+        with self.database.transaction():
+            self._require_session(session_id)
+            rows = self.database.execute(
+                "SELECT title FROM sessions WHERE id != ?", (session_id,)
+            ).fetchall()
+            existing = {row["title"] for row in rows}
+            candidate = normalized[:max_length].rstrip()
+            counter = 2
+            while candidate in existing:
+                suffix = f"（{counter}）"
+                candidate = f"{normalized[: max_length - len(suffix)].rstrip()}{suffix}"
+                counter += 1
+            self.database.execute(
+                "UPDATE sessions SET title = ?, updated_at = ? WHERE id = ?",
+                (candidate, _now(), session_id),
+            )
+        return self.get_session(session_id)
+
     def update_session_preferences(
         self,
         session_id: str,
@@ -281,6 +305,13 @@ class Repository:
             "SELECT id FROM messages WHERE session_id = ? ORDER BY created_at, rowid", (session_id,)
         ).fetchall()
         return [self._get_message(row["id"]) for row in rows]
+
+    def session_has_messages(self, session_id: str) -> bool:
+        row = self.database.execute(
+            "SELECT EXISTS(SELECT 1 FROM messages WHERE session_id = ? LIMIT 1) AS found",
+            (session_id,),
+        ).fetchone()
+        return bool(row["found"])
 
     def append_tool_run(
         self,

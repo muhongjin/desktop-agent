@@ -62,7 +62,7 @@ class SessionListModel(QAbstractListModel):
 
 class SessionService(QObject):
     currentSessionChanged = Signal()
-    sessionArchived = Signal()
+    sessionArchived = Signal(str)
 
     def __init__(
         self, repository: Repository, workspaces: WorkspaceService, settings: SettingsService
@@ -86,6 +86,11 @@ class SessionService(QObject):
     @Property(bool, notify=currentSessionChanged)
     def hasCurrentSession(self):
         return bool(self._current_session_id)
+
+    @Property(str, notify=currentSessionChanged)
+    def currentSessionTitle(self):
+        session = self._current_session()
+        return session.title if session else ""
 
     @Property(str, notify=currentSessionChanged)
     def currentModelId(self):
@@ -112,6 +117,12 @@ class SessionService(QObject):
             self._current_session_id = session_id
             self.currentSessionChanged.emit()
 
+    @Slot(str)
+    def refreshSessionTitle(self, session_id: str) -> None:
+        self.sessions.refresh()
+        if session_id == self._current_session_id:
+            self.currentSessionChanged.emit()
+
     @Slot(result=str)
     def createSession(self) -> str:
         session_id = str(uuid4())
@@ -133,9 +144,10 @@ class SessionService(QObject):
     def archiveCurrent(self) -> None:
         if not self._current_session_id:
             return
-        self._full_access.discard(self._current_session_id)
-        self.repository.archive_session(self._current_session_id)
-        self.sessionArchived.emit()
+        archived_id = self._current_session_id
+        self._full_access.discard(archived_id)
+        self.repository.archive_session(archived_id)
+        self.sessionArchived.emit(archived_id)
         self.sessions.refresh()
         self._current_session_id = self.sessions.sessions[0].id if self.sessions.sessions else ""
         self.currentSessionChanged.emit()
@@ -220,8 +232,10 @@ class ApplicationServices(QObject):
             self.credentials,
             safe_mode,
         )
+        self.chat.sessionTitleChanged.connect(self.sessions.refreshSessionTitle)
         self.sessions.sessionArchived.connect(self.archive.archived.refresh)
         self.sessions.sessionArchived.connect(self.chat.stop)
+        self.sessions.sessionArchived.connect(self.chat.clearSessionPermissions)
 
 
 async def build_application(
@@ -237,7 +251,7 @@ async def build_application(
     services = ApplicationServices(resolved_paths, resolved_repository, workspaces, safe_mode)
     application = QCoreApplication.instance()
     if application is not None:
-        application.aboutToQuit.connect(services.chat.stop)
+        application.aboutToQuit.connect(services.chat.shutdown)
     engine = QQmlApplicationEngine()
     services.setParent(engine)
     services.sessions.setParent(services)

@@ -36,6 +36,30 @@ def test_archive_and_restore_only_change_status(repository, tmp_path):
     assert restored.title == session.title
 
 
+def test_generated_session_title_is_unique_across_active_and_archived_chats(
+    repository, tmp_path
+):
+    repository.create_session("项目规划", str(tmp_path / "active"))
+    archived = repository.create_session("项目规划（2）", str(tmp_path / "archived"))
+    repository.archive_session(archived.id)
+    target = repository.create_session("新对话", str(tmp_path / "target"))
+
+    updated = repository.set_unique_session_title(target.id, "项目规划")
+
+    assert updated.title == "项目规划（3）"
+
+
+def test_generated_session_title_respects_length_limit(repository, tmp_path):
+    title = "这是一个非常长而且需要被截断的会话标题用于测试"
+    repository.create_session(title[:24], str(tmp_path / "existing"))
+    target = repository.create_session("新对话", str(tmp_path / "target"))
+
+    updated = repository.set_unique_session_title(target.id, title)
+
+    assert len(updated.title) <= 24
+    assert updated.title.endswith("（2）")
+
+
 def test_delete_archived_session_cascades_related_rows(repository, tmp_path):
     session = repository.create_session("Draft", str(tmp_path))
     repository.append_message(session.id, MessageRole.USER, "hello")

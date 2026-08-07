@@ -38,6 +38,7 @@ packages = ["src/desktop_agent"]
 include = [
     "src/desktop_agent/**/*.py",
     "src/desktop_agent/**/*.qml",
+    "src/desktop_agent/ui/qmldir",
     "src/desktop_agent/resources/*.md",
 ]
 

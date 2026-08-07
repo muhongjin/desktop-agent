@@ -1,14 +1,22 @@
 import asyncio
+import json
+import re
 from contextlib import suppress
 from dataclasses import replace
 from pathlib import Path
 
+from keyring.errors import KeyringError
 from PySide6.QtCore import Property, QAbstractListModel, QModelIndex, QObject, Qt, Signal, Slot
 
 from desktop_agent.agent.loop import AgentLoop
 from desktop_agent.agent.prompt import PromptComposer
-from desktop_agent.domain.models import MessageRole, MessageStatus
-from desktop_agent.providers.openai_compatible import OpenAICompatibleClient
+from desktop_agent.domain.models import MessageRole
+from desktop_agent.providers.openai_compatible import (
+    AssistantTurn,
+    OpenAICompatibleClient,
+    ProviderError,
+    TextDelta,
+)
 from desktop_agent.security.permissions import SessionAccess
 from desktop_agent.tools.files import FileTools
 from desktop_agent.tools.powershell import PowerShellExecutor, ShellUnavailable
@@ -20,6 +28,9 @@ class MessageListModel(QAbstractListModel):
     ContentRole = Qt.UserRole + 2
     StatusRole = Qt.UserRole + 3
     DetailsRole = Qt.UserRole + 4
+    ToolNameRole = Qt.UserRole + 5
+    ToolStatusRole = Qt.UserRole + 6
+    ToolInputRole = Qt.UserRole + 7
 
     def __init__(self, repository):
         super().__init__()
@@ -27,6 +38,7 @@ class MessageListModel(QAbstractListModel):
         self.session_id = ""
         self.messages = []
         self.details = {}
+        self.tool_runs = {}
 
     def roleNames(self):
         return {
@@ -34,6 +46,9 @@ class MessageListModel(QAbstractListModel):
             self.ContentRole: b"content",
             self.StatusRole: b"status",
             self.DetailsRole: b"details",
+            self.ToolNameRole: b"toolName",
+            self.ToolStatusRole: b"toolStatus",
+            self.ToolInputRole: b"toolInput",
         }
 
     def rowCount(self, parent=None):
@@ -47,14 +62,18 @@ class MessageListModel(QAbstractListModel):
         if role == self.RoleRole:
             return message.role.value
         if role in {self.ContentRole, Qt.DisplayRole}:
-            content = message.content
-            if message.role is MessageRole.ASSISTANT and message.status is MessageStatus.STOPPED:
-                content = f"{content}\n\n响应已停止" if content else "响应已停止"
-            return content
+            return message.content
         if role == self.StatusRole:
             return message.status.value
         if role == self.DetailsRole:
             return self.details.get(message.id, "")
+        tool_run = self.tool_runs.get(message.id)
+        if role == self.ToolNameRole:
+            return tool_run.tool_name if tool_run is not None else ""
+        if role == self.ToolStatusRole:
+            return tool_run.status.value if tool_run is not None else ""
+        if role == self.ToolInputRole:
+            return tool_run.input_json if tool_run is not None else ""
         return None
 
     def load(self, session_id: str) -> None:
@@ -62,6 +81,7 @@ class MessageListModel(QAbstractListModel):
         self.session_id = session_id
         self.messages = self.repository.list_messages(session_id) if session_id else []
         self.details = {}
+        self.tool_runs = {}
         if session_id:
             runs = iter(self.repository.list_tool_runs(session_id))
             for message in self.messages:
@@ -69,6 +89,7 @@ class MessageListModel(QAbstractListModel):
                     run = next(runs, None)
                     if run is not None:
                         self.details[message.id] = run.raw_output
+                        self.tool_runs[message.id] = run
         self.endResetModel()
 
     def update_message_content(self, message_id: str, content: str) -> None:
@@ -97,7 +118,8 @@ class MessageListModel(QAbstractListModel):
 
 class ChatService(QObject):
     runningChanged = Signal()
-    permissionRequested = Signal(str, str)
+    permissionRequested = Signal(str, str, str)
+    sessionTitleChanged = Signal(str)
 
     def __init__(
         self,
@@ -109,6 +131,7 @@ class ChatService(QObject):
         credentials,
         safe_mode=False,
         provider_factory=None,
+        title_provider_factory=None,
     ):
         super().__init__()
         self.repository = repository
@@ -119,12 +142,16 @@ class ChatService(QObject):
         self.credentials = credentials
         self.safe_mode = safe_mode
         self.provider_factory = provider_factory or OpenAICompatibleClient
+        self.title_provider_factory = title_provider_factory or self.provider_factory
         self.messages = MessageListModel(repository)
         self._running = False
         self._stop_event: asyncio.Event | None = None
         self._task: asyncio.Task | None = None
+        self._title_tasks: set[asyncio.Task] = set()
         self._permission_future: asyncio.Future | None = None
         self._shell: PowerShellExecutor | None = None
+        self._active_session_id = ""
+        self._session_permissions: dict[str, set[str]] = {}
         self.sessions.currentSessionChanged.connect(self.reload)
         self.reload()
 
@@ -148,7 +175,9 @@ class ChatService(QObject):
         self.runningChanged.emit()
         self._stop_event = asyncio.Event()
         session_id = self.sessions.currentSessionId
-        self._task = asyncio.create_task(self._run(session_id, content.strip()))
+        content = content.strip()
+        self._start_title_generation(session_id, content)
+        self._task = asyncio.create_task(self._run(session_id, content))
         self._task.add_done_callback(self._finished)
 
     @Slot()
@@ -156,14 +185,24 @@ class ChatService(QObject):
         if self._stop_event is not None:
             self._stop_event.set()
         if self._permission_future is not None and not self._permission_future.done():
-            self._permission_future.set_result(False)
+            self._permission_future.set_result("deny")
         if self._shell is not None:
             self._shell.stop()
 
-    @Slot(bool)
-    def resolvePermission(self, allowed: bool) -> None:
+    @Slot()
+    def shutdown(self) -> None:
+        self.stop()
+        for task in self._title_tasks:
+            task.cancel()
+
+    @Slot(str)
+    def resolvePermission(self, decision: str) -> None:
         if self._permission_future is not None and not self._permission_future.done():
-            self._permission_future.set_result(allowed)
+            self._permission_future.set_result(decision)
+
+    @Slot(str)
+    def clearSessionPermissions(self, session_id: str) -> None:
+        self._session_permissions.pop(session_id, None)
 
     async def _run(self, session_id: str, content: str) -> None:
         await asyncio.sleep(0)
@@ -195,6 +234,7 @@ class ChatService(QObject):
             self._confirm_permission,
         )
         try:
+            self._active_session_id = session.id
             async for event in loop.send_message(
                 session.id,
                 content,
@@ -216,7 +256,85 @@ class ChatService(QObject):
             if shell is not None:
                 shell.close()
             self._shell = None
+            self._active_session_id = ""
             await provider.close()
+
+    def _start_title_generation(self, session_id: str, content: str) -> None:
+        session = self.repository.get_session(session_id)
+        if (
+            session is None
+            or session.title != "新对话"
+            or not session.current_model_id
+            or self.repository.session_has_messages(session_id)
+        ):
+            return
+        task = asyncio.create_task(self._generate_title(session, content))
+        self._title_tasks.add(task)
+        task.add_done_callback(self._title_finished)
+
+    async def _generate_title(self, session, content: str) -> None:
+        provider_id, model_id = session.current_model_id.split(":", 1)
+        config = self.repository.get_provider_config(provider_id)
+        generated = ""
+        provider = None
+        if config is not None:
+            try:
+                api_key = await asyncio.to_thread(self.credentials.get, provider_id)
+                provider = self.title_provider_factory(config.base_url, api_key)
+                parts = []
+                async for event in provider.stream_chat(
+                    model_id=model_id,
+                    messages=(
+                        {
+                            "role": "system",
+                            "content": (
+                                "为这段对话生成一个具体、易区分的短标题。使用用户消息的语言，"
+                                "不超过20个字符。只输出标题，不要引号、Markdown、换行或解释。"
+                            ),
+                        },
+                        {"role": "user", "content": content},
+                    ),
+                    tools=(),
+                ):
+                    if isinstance(event, TextDelta):
+                        parts.append(event.text)
+                    elif isinstance(event, AssistantTurn) and event.text:
+                        generated = event.text
+                generated = generated or "".join(parts)
+            except asyncio.CancelledError:
+                raise
+            except (KeyringError, OSError, ProviderError, RuntimeError, TypeError, ValueError):
+                generated = ""
+            finally:
+                if provider is not None:
+                    with suppress(Exception):
+                        await provider.close()
+        title = self._clean_title(generated, content)
+        try:
+            self.repository.set_unique_session_title(session.id, title)
+        except KeyError:
+            return
+        self.sessionTitleChanged.emit(session.id)
+
+    @staticmethod
+    def _clean_title(generated: str, fallback: str) -> str:
+        first_line = next((line.strip() for line in generated.splitlines() if line.strip()), "")
+        first_line = first_line.strip(" \t\r\n#*`_\"'“”‘’《》")
+        title = re.sub(
+            r"^(?:会话标题|对话标题|标题|conversation title|title)\s*[:：]\s*",
+            "",
+            first_line,
+            flags=re.IGNORECASE,
+        )
+        title = re.sub(r"\s+", " ", title).strip(" \t\r\n#*`_\"'“”‘’《》")
+        if not title or title == "新对话":
+            title = re.sub(r"\s+", " ", fallback).strip()
+        return title[:24].rstrip() or "未命名对话"
+
+    def _title_finished(self, task: asyncio.Task) -> None:
+        self._title_tasks.discard(task)
+        with suppress(asyncio.CancelledError):
+            task.exception()
 
     def _access(self, session):
         associated = session.associated_directory
@@ -229,12 +347,27 @@ class ChatService(QObject):
         return SessionAccess.local(workspace, associated_path)
 
     async def _confirm_permission(self, request, tool, arguments) -> bool:
+        grants = self._session_permissions.get(self._active_session_id, set())
+        if request.risk not in self.permission_broker.high_risks and request.capability in grants:
+            return True
         self._permission_future = asyncio.get_running_loop().create_future()
-        self.permissionRequested.emit(request.capability, str(request.path))
+        detail = self._permission_detail(tool, arguments)
+        self.permissionRequested.emit(request.capability, str(request.path), detail)
         try:
-            return bool(await self._permission_future)
+            decision = await self._permission_future
+            if decision == "session" and request.risk not in self.permission_broker.high_risks:
+                self._session_permissions.setdefault(self._active_session_id, set()).add(
+                    request.capability
+                )
+            return decision in {"once", "session"}
         finally:
             self._permission_future = None
+
+    def _permission_detail(self, tool, arguments) -> str:
+        if tool.name == "run_powershell":
+            shell = self._shell.shell if self._shell is not None else self.settings.shellMode
+            return f"{shell}\n{arguments.get('command', '')}".strip()
+        return json.dumps(arguments, ensure_ascii=False, indent=2)
 
     def _finished(self, task) -> None:
         with suppress(asyncio.CancelledError):

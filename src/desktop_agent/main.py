@@ -21,7 +21,9 @@ def build_argument_parser() -> argparse.ArgumentParser:
 
 
 async def build_application() -> QQmlApplicationEngine:
-    return QQmlApplicationEngine()
+    from desktop_agent.app import build_application as compose_application
+
+    return await compose_application()
 
 
 def main(argv: Sequence[str] | None = None) -> int:

@@ -83,6 +83,15 @@ class Repository:
             updated_at=_timestamp(row["updated_at"]),
         )
 
+    def list_sessions(self, status: SessionStatus | None = None) -> list[Session]:
+        if status is None:
+            rows = self.database.execute("SELECT id FROM sessions ORDER BY updated_at DESC, rowid DESC").fetchall()
+        else:
+            rows = self.database.execute(
+                "SELECT id FROM sessions WHERE status = ? ORDER BY updated_at DESC, rowid DESC", (status,)
+            ).fetchall()
+        return [self.get_session(row["id"]) for row in rows]
+
     def _set_session_status(self, session_id: str, expected: SessionStatus, target: SessionStatus) -> Session:
         now = _now()
         with self.database.transaction():

@@ -46,6 +46,8 @@ class Message:
     model_id: str | None
     thinking_strength: str | None
     request_params: dict[str, Any]
+    tool_calls: tuple[dict[str, Any], ...]
+    tool_call_id: str | None
     status: MessageStatus
     completion_marker: bool
     created_at: datetime

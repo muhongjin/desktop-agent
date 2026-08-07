@@ -66,7 +66,10 @@ class FileTools:
     def _authorize(
         self, capability: str, path: str | Path, *, risk: str | None = None, confirmed: bool = False
     ) -> Path:
-        target = Path(path).expanduser().resolve(strict=False)
+        target = Path(path).expanduser()
+        if not target.is_absolute():
+            target = self.access.workspace / target
+        target = target.resolve(strict=False)
         decision = self.broker.evaluate(PermissionRequest(capability, target, risk), self.access)
         if decision is PermissionDecision.DENY:
             raise PermissionDenied(f"{capability} is not allowed for {target}")

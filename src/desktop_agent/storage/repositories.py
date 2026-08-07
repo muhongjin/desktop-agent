@@ -128,6 +128,8 @@ class Repository:
         model_id: str | None = None,
         thinking_strength: str | None = None,
         request_params: dict[str, Any] | None = None,
+        tool_calls: list[dict[str, Any]] | tuple[dict[str, Any], ...] | None = None,
+        tool_call_id: str | None = None,
         status: MessageStatus = MessageStatus.COMPLETE,
         completion_marker: bool = True,
     ) -> Message:
@@ -138,7 +140,8 @@ class Repository:
             self._require_session(session_id)
             self.database.execute(
                 "INSERT INTO messages (id, session_id, role, content, model_id, thinking_strength, "
-                "request_params, status, completion_marker, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "request_params, tool_calls_json, tool_call_id, status, completion_marker, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     message_id,
                     session_id,
@@ -147,6 +150,8 @@ class Repository:
                     model_id,
                     thinking_strength,
                     _json(safe_request_params),
+                    _json(tool_calls or []),
+                    tool_call_id,
                     status,
                     int(completion_marker),
                     now,
@@ -154,12 +159,26 @@ class Repository:
             )
         return self._get_message(message_id)
 
-    def update_message(self, message_id: str, content: Any, status: MessageStatus, completion_marker: bool) -> Message:
+    def update_message(
+        self,
+        message_id: str,
+        content: Any,
+        status: MessageStatus,
+        completion_marker: bool,
+        tool_calls: list[dict[str, Any]] | tuple[dict[str, Any], ...] | None = None,
+    ) -> Message:
         normalized_content = content if isinstance(content, str) else _json(content)
         with self.database.transaction():
             cursor = self.database.execute(
-                "UPDATE messages SET content = ?, status = ?, completion_marker = ? WHERE id = ?",
-                (normalized_content, status, int(completion_marker), message_id),
+                "UPDATE messages SET content = ?, status = ?, completion_marker = ?, "
+                "tool_calls_json = COALESCE(?, tool_calls_json) WHERE id = ?",
+                (
+                    normalized_content,
+                    status,
+                    int(completion_marker),
+                    _json(tool_calls) if tool_calls is not None else None,
+                    message_id,
+                ),
             )
             if cursor.rowcount == 0:
                 raise KeyError(f"Unknown message: {message_id}")
@@ -181,6 +200,8 @@ class Repository:
             model_id=row["model_id"],
             thinking_strength=row["thinking_strength"],
             request_params=json.loads(row["request_params"]),
+            tool_calls=tuple(json.loads(row["tool_calls_json"])),
+            tool_call_id=row["tool_call_id"],
             status=MessageStatus(row["status"]),
             completion_marker=bool(row["completion_marker"]),
             created_at=_timestamp(row["created_at"]),

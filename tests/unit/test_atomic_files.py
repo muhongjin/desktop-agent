@@ -20,6 +20,11 @@ def test_write_uses_temp_file_then_replace(files, tmp_path):
     assert list(target.parent.glob(f".{target.name}.*.tmp")) == []
 
 
+def test_relative_path_is_resolved_from_workspace(files, tmp_path):
+    files.write_file("nested/a.txt", "content")
+    assert (tmp_path / "nested" / "a.txt").read_text() == "content"
+
+
 def test_failed_replace_removes_temporary_file(files, tmp_path, monkeypatch):
     target = tmp_path / "a.txt"
 

@@ -12,6 +12,8 @@ class RegisteredTool:
     description: str
     input_schema: dict[str, Any]
     callable: Callable[..., ToolResult]
+    capability: str
+    path_argument: str = "path"
 
     def model_schema(self) -> dict[str, Any]:
         return {
@@ -28,8 +30,8 @@ def file_tool_registry(files: FileTools) -> dict[str, RegisteredTool]:
         "additionalProperties": False,
     }
     return {
-        "list_files": RegisteredTool("list_files", "List directory entries", path_schema, files.list_files),
-        "read_file": RegisteredTool("read_file", "Read a text file", path_schema, files.read_file),
+        "list_files": RegisteredTool("list_files", "List directory entries", path_schema, files.list_files, "fs.read"),
+        "read_file": RegisteredTool("read_file", "Read a text file", path_schema, files.read_file, "fs.read"),
         "write_file": RegisteredTool(
             "write_file",
             "Write a text file atomically",
@@ -40,6 +42,9 @@ def file_tool_registry(files: FileTools) -> dict[str, RegisteredTool]:
                 "additionalProperties": False,
             },
             files.write_file,
+            "fs.write",
         ),
-        "delete_path": RegisteredTool("delete_path", "Delete a file or empty directory", path_schema, files.delete_path),
+        "delete_path": RegisteredTool(
+            "delete_path", "Delete a file or empty directory", path_schema, files.delete_path, "fs.delete"
+        ),
     }

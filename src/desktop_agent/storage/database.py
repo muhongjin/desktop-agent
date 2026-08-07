@@ -24,6 +24,8 @@ CREATE TABLE IF NOT EXISTS messages (
     model_id TEXT,
     thinking_strength TEXT,
     request_params TEXT NOT NULL DEFAULT '{}',
+    tool_calls_json TEXT NOT NULL DEFAULT '[]',
+    tool_call_id TEXT,
     status TEXT NOT NULL CHECK (status IN ('complete', 'stopped')),
     completion_marker INTEGER NOT NULL CHECK (completion_marker IN (0, 1)),
     created_at TEXT NOT NULL
@@ -66,6 +68,11 @@ class Database:
         columns = {row["name"] for row in self.connection.execute("PRAGMA table_info(sessions)")}
         if "associated_directory" not in columns:
             self.connection.execute("ALTER TABLE sessions ADD COLUMN associated_directory TEXT")
+        message_columns = {row["name"] for row in self.connection.execute("PRAGMA table_info(messages)")}
+        if "tool_calls_json" not in message_columns:
+            self.connection.execute("ALTER TABLE messages ADD COLUMN tool_calls_json TEXT NOT NULL DEFAULT '[]'")
+        if "tool_call_id" not in message_columns:
+            self.connection.execute("ALTER TABLE messages ADD COLUMN tool_call_id TEXT")
         self.connection.commit()
 
     def execute(self, sql: str, parameters: tuple[Any, ...] = ()) -> sqlite3.Cursor:

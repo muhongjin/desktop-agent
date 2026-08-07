@@ -31,6 +31,7 @@ class Session:
     id: str
     title: str
     workspace_path: str
+    associated_directory: str | None
     status: SessionStatus
     created_at: datetime
     updated_at: datetime

@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     id TEXT PRIMARY KEY,
     title TEXT NOT NULL,
     workspace_path TEXT NOT NULL,
+    associated_directory TEXT,
     status TEXT NOT NULL CHECK (status IN ('active', 'archived')),
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
@@ -62,6 +63,9 @@ class Database:
         self.connection.execute("PRAGMA journal_mode = WAL")
         self.connection.execute("PRAGMA busy_timeout = 5000")
         self.connection.executescript(SCHEMA)
+        columns = {row["name"] for row in self.connection.execute("PRAGMA table_info(sessions)")}
+        if "associated_directory" not in columns:
+            self.connection.execute("ALTER TABLE sessions ADD COLUMN associated_directory TEXT")
         self.connection.commit()
 
     def execute(self, sql: str, parameters: tuple[Any, ...] = ()) -> sqlite3.Cursor:

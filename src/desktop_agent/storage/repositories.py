@@ -63,9 +63,9 @@ class Repository:
         session_id, now = _id(), _now()
         with self.database.transaction():
             self.database.execute(
-                "INSERT INTO sessions (id, title, workspace_path, status, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                (session_id, title, workspace_path, SessionStatus.ACTIVE, now, now),
+                "INSERT INTO sessions (id, title, workspace_path, associated_directory, status, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (session_id, title, workspace_path, None, SessionStatus.ACTIVE, now, now),
             )
         return self.get_session(session_id)
 
@@ -77,6 +77,7 @@ class Repository:
             id=row["id"],
             title=row["title"],
             workspace_path=row["workspace_path"],
+            associated_directory=row["associated_directory"],
             status=SessionStatus(row["status"]),
             created_at=_timestamp(row["created_at"]),
             updated_at=_timestamp(row["updated_at"]),
@@ -93,6 +94,15 @@ class Repository:
                 if self.get_session(session_id) is None:
                     raise KeyError(f"Unknown session: {session_id}")
                 raise InvalidSessionState(f"Session must be {expected.value}")
+        return self.get_session(session_id)
+
+    def set_associated_directory(self, session_id: str, path: str | None) -> Session:
+        with self.database.transaction():
+            self._require_session(session_id)
+            self.database.execute(
+                "UPDATE sessions SET associated_directory = ?, updated_at = ? WHERE id = ?",
+                (path, _now(), session_id),
+            )
         return self.get_session(session_id)
 
     def archive_session(self, session_id: str) -> Session:

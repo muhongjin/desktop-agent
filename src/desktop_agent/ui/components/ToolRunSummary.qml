@@ -8,10 +8,10 @@ Frame {
     property string details: ""
     property bool expanded: false
 
+    implicitHeight: expanded ? 170 : 52
     padding: 10
 
-    ColumnLayout {
-        anchors.fill: parent
+    contentItem: ColumnLayout {
         spacing: 8
 
         RowLayout {
@@ -39,6 +39,7 @@ Frame {
             selectByMouse: true
             wrapMode: TextArea.Wrap
             Layout.fillWidth: true
+            Layout.preferredHeight: root.expanded ? Math.max(88, contentHeight + 20) : 0
         }
     }
 }

@@ -34,9 +34,17 @@ dev = [
 [tool.hatch.build.targets.wheel]
 packages = ["src/desktop_agent"]
 
+[tool.hatch.build]
+include = [
+    "src/desktop_agent/**/*.py",
+    "src/desktop_agent/**/*.qml",
+    "src/desktop_agent/resources/*.md",
+]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra"
 
 [tool.ruff]
 line-length = 100
+extend-exclude = ["docs"]

@@ -20,6 +20,7 @@ Item {
         delegate: ColumnLayout {
             required property string role
             required property string content
+            required property string details
             width: ListView.view.width
             spacing: 5
 
@@ -31,11 +32,19 @@ Item {
             }
 
             TextEdit {
+                visible: role !== "tool"
                 text: content
                 readOnly: true
                 selectByMouse: true
                 wrapMode: TextEdit.Wrap
                 color: "#202428"
+                Layout.fillWidth: true
+            }
+
+            ToolRunSummary {
+                visible: role === "tool"
+                summary: content
+                details: parent.details
                 Layout.fillWidth: true
             }
         }

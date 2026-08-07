@@ -32,6 +32,14 @@ def test_create_workspace_uses_session_id(service):
     assert path.is_dir()
 
 
+def test_repository_and_workspace_can_share_the_same_session_id(service):
+    workspace, repo, _ = service
+    path = workspace.create_for_session("session-1")
+    session = repo.create_session("Draft", str(path), session_id="session-1")
+    assert session.id == "session-1"
+    assert Path(session.workspace_path).name == session.id
+
+
 def test_associate_external_directory_is_normalized(service, tmp_path):
     workspace, repo, _ = service
     path = workspace.create_for_session("session-1")

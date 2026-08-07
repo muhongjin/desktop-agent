@@ -5,6 +5,7 @@ from uuid import uuid4
 from PySide6.QtCore import (
     Property,
     QAbstractListModel,
+    QCoreApplication,
     QModelIndex,
     QObject,
     Qt,
@@ -15,9 +16,11 @@ from PySide6.QtCore import (
 from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtQuickControls2 import QQuickStyle
 
+from desktop_agent.chat_service import ChatService
 from desktop_agent.domain.models import SessionStatus
 from desktop_agent.security.credentials import KeyringCredentialStore
 from desktop_agent.security.permissions import PermissionBroker
+from desktop_agent.services import ArchiveService, DataService, ModelService, SettingsService
 from desktop_agent.settings import LocalPaths, local_paths
 from desktop_agent.storage.database import Database
 from desktop_agent.storage.repositories import Repository
@@ -59,13 +62,16 @@ class SessionListModel(QAbstractListModel):
 
 class SessionService(QObject):
     currentSessionChanged = Signal()
+    sessionArchived = Signal()
 
-    def __init__(self, repository: Repository, workspaces: WorkspaceService):
+    def __init__(self, repository: Repository, workspaces: WorkspaceService, settings: SettingsService):
         super().__init__()
         self.repository = repository
         self.workspaces = workspaces
+        self.settings = settings
         self.sessions = SessionListModel(repository)
         self._current_session_id = self.sessions.sessions[0].id if self.sessions.sessions else ""
+        self._full_access: set[str] = set()
 
     @Property(QObject, constant=True)
     def activeSessions(self):
@@ -79,6 +85,25 @@ class SessionService(QObject):
     def hasCurrentSession(self):
         return bool(self._current_session_id)
 
+    @Property(str, notify=currentSessionChanged)
+    def currentModelId(self):
+        session = self._current_session()
+        return session.current_model_id if session and session.current_model_id else ""
+
+    @Property(str, notify=currentSessionChanged)
+    def thinkingStrength(self):
+        session = self._current_session()
+        return session.thinking_strength if session and session.thinking_strength else "medium"
+
+    @Property(str, notify=currentSessionChanged)
+    def executionMode(self):
+        session = self._current_session()
+        return session.execution_mode if session else "local"
+
+    @Property(bool, notify=currentSessionChanged)
+    def fullAccess(self):
+        return self._current_session_id in self._full_access
+
     @Slot(str)
     def selectSession(self, session_id: str) -> None:
         if session_id != self._current_session_id:
@@ -87,9 +112,16 @@ class SessionService(QObject):
 
     @Slot(result=str)
     def createSession(self) -> str:
-        workspace_id = str(uuid4())
-        workspace = self.workspaces.create_for_session(workspace_id)
-        session = self.repository.create_session("新对话", str(workspace))
+        session_id = str(uuid4())
+        workspace = self.workspaces.create_for_session(session_id)
+        session = self.repository.create_session(
+            "新对话",
+            str(workspace),
+            current_model_id=self.settings.get("recent_model_id"),
+            thinking_strength=self.settings.get("recent_thinking_strength", "medium"),
+            execution_mode=self.settings.get("recent_execution_mode", "local"),
+            session_id=session_id,
+        )
         self.sessions.refresh()
         self._current_session_id = session.id
         self.currentSessionChanged.emit()
@@ -99,7 +131,9 @@ class SessionService(QObject):
     def archiveCurrent(self) -> None:
         if not self._current_session_id:
             return
+        self._full_access.discard(self._current_session_id)
         self.repository.archive_session(self._current_session_id)
+        self.sessionArchived.emit()
         self.sessions.refresh()
         self._current_session_id = self.sessions.sessions[0].id if self.sessions.sessions else ""
         self.currentSessionChanged.emit()
@@ -114,36 +148,105 @@ class SessionService(QObject):
         Path(session.workspace_path).mkdir(parents=True, exist_ok=True)
         os.startfile(session.workspace_path)
 
+    @Slot(str)
+    def setCurrentModel(self, model_id: str) -> None:
+        if not self._current_session_id:
+            return
+        self.repository.update_session_preferences(self._current_session_id, model_id=model_id)
+        self.settings.setValue("recent_model_id", model_id)
+        self.currentSessionChanged.emit()
+
+    @Slot(str)
+    def setThinkingStrength(self, value: str) -> None:
+        if not self._current_session_id:
+            return
+        self.repository.update_session_preferences(self._current_session_id, thinking_strength=value)
+        self.settings.setValue("recent_thinking_strength", value)
+        self.currentSessionChanged.emit()
+
+    @Slot(str)
+    def setExecutionMode(self, value: str) -> None:
+        if not self._current_session_id:
+            return
+        self.repository.update_session_preferences(self._current_session_id, execution_mode=value)
+        self.settings.setValue("recent_execution_mode", value)
+        self.currentSessionChanged.emit()
+
+    @Slot(bool)
+    def setFullAccess(self, enabled: bool) -> None:
+        if not self._current_session_id:
+            return
+        if enabled:
+            self._full_access.add(self._current_session_id)
+        else:
+            self._full_access.discard(self._current_session_id)
+        self.currentSessionChanged.emit()
+
+    def _current_session(self):
+        if not self._current_session_id:
+            return None
+        return self.repository.get_session(self._current_session_id)
+
 
 class ApplicationServices(QObject):
-    def __init__(self, paths: LocalPaths, repository: Repository, workspaces: WorkspaceService):
+    def __init__(self, paths: LocalPaths, repository: Repository, workspaces: WorkspaceService, safe_mode=False):
         super().__init__()
         self.paths = paths
         self.repository = repository
         self.workspaces = workspaces
         self.credentials = KeyringCredentialStore()
         self.permissions = PermissionBroker()
-        self.sessions = SessionService(repository, workspaces)
+        self.settings = SettingsService(repository)
+        self.models = ModelService(repository, self.credentials)
+        self.sessions = SessionService(repository, workspaces, self.settings)
+        self.archive = ArchiveService(repository, workspaces, self.sessions.sessions)
+        self.data = DataService(paths.data_dir, paths.workspaces)
+        self.chat = ChatService(
+            repository,
+            self.sessions,
+            self.models,
+            self.settings,
+            self.permissions,
+            self.credentials,
+            safe_mode,
+        )
+        self.sessions.sessionArchived.connect(self.archive.archived.refresh)
 
 
 async def build_application(
     *,
     paths: LocalPaths | None = None,
     repository: Repository | None = None,
+    safe_mode: bool = False,
 ) -> QQmlApplicationEngine:
     resolved_paths = paths or local_paths()
     database = repository.database if repository is not None else Database(resolved_paths.database)
     resolved_repository = repository or Repository(database)
     workspaces = WorkspaceService(resolved_paths.workspaces, resolved_repository)
-    services = ApplicationServices(resolved_paths, resolved_repository, workspaces)
+    services = ApplicationServices(resolved_paths, resolved_repository, workspaces, safe_mode)
+    application = QCoreApplication.instance()
+    if application is not None:
+        application.aboutToQuit.connect(services.chat.stop)
     engine = QQmlApplicationEngine()
     services.setParent(engine)
     services.sessions.setParent(services)
     services.sessions.sessions.setParent(services.sessions)
+    services.settings.setParent(services)
+    services.models.setParent(services)
+    services.archive.setParent(services)
+    services.archive.archived.setParent(services.archive)
+    services.data.setParent(services)
+    services.chat.setParent(services)
+    services.chat.messages.setParent(services.chat)
     engine._services = services
     engine._database = database
     engine.destroyed.connect(database.close)
     engine.rootContext().setContextProperty("sessionService", services.sessions)
+    engine.rootContext().setContextProperty("modelService", services.models)
+    engine.rootContext().setContextProperty("settingsService", services.settings)
+    engine.rootContext().setContextProperty("archiveService", services.archive)
+    engine.rootContext().setContextProperty("dataService", services.data)
+    engine.rootContext().setContextProperty("chatService", services.chat)
     QQuickStyle.setStyle("Basic")
     qml_path = Path(__file__).parent / "ui" / "Main.qml"
     engine.load(QUrl.fromLocalFile(str(qml_path)))

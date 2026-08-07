@@ -85,3 +85,24 @@ def test_tool_context_and_raw_output_are_stored_separately(repository, tmp_path)
     assert json.loads(run.input_json) == context
     assert run.raw_output == "raw\noutput"
     assert run.status is ToolRunStatus.FAILED
+
+
+def test_session_preference_changes_do_not_rewrite_message_snapshot(repository, tmp_path):
+    session = repository.create_session(
+        "Draft", str(tmp_path), current_model_id="openai:model-a", thinking_strength="medium"
+    )
+    message = repository.append_message(
+        session.id,
+        MessageRole.ASSISTANT,
+        "answer",
+        model_id="model-a",
+        thinking_strength="medium",
+    )
+    updated = repository.update_session_preferences(
+        session.id, model_id="openai:model-b", thinking_strength="high"
+    )
+    persisted = repository.list_messages(session.id)[0]
+    assert updated.current_model_id == "openai:model-b"
+    assert updated.thinking_strength == "high"
+    assert persisted.model_id == message.model_id == "model-a"
+    assert persisted.thinking_strength == message.thinking_strength == "medium"

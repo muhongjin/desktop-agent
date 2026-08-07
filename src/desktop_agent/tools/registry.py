@@ -1,8 +1,8 @@
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
-from desktop_agent.tools.base import ToolResult
 from desktop_agent.tools.files import FileTools
 
 
@@ -11,7 +11,7 @@ class RegisteredTool:
     name: str
     description: str
     input_schema: dict[str, Any]
-    callable: Callable[..., ToolResult]
+    callable: Callable[..., Any]
     capability: str
     path_argument: str = "path"
 
@@ -48,3 +48,28 @@ def file_tool_registry(files: FileTools) -> dict[str, RegisteredTool]:
             "delete_path", "Delete a file or empty directory", path_schema, files.delete_path, "fs.delete"
         ),
     }
+
+
+def powershell_tool(executor, workspace) -> RegisteredTool:
+    async def run(command: str, cwd: str | None = None, stop_event=None):
+        working_directory = Path(cwd) if cwd else Path(workspace)
+        if not working_directory.is_absolute():
+            working_directory = Path(workspace) / working_directory
+        return await executor.execute(command, cwd=working_directory.resolve(), stop_event=stop_event)
+
+    return RegisteredTool(
+        "run_powershell",
+        "Run a PowerShell command in the session workspace",
+        {
+            "type": "object",
+            "properties": {
+                "command": {"type": "string"},
+                "cwd": {"type": "string"},
+            },
+            "required": ["command"],
+            "additionalProperties": False,
+        },
+        run,
+        "process.exec",
+        "cwd",
+    )

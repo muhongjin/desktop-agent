@@ -4,6 +4,7 @@ import QtQuick.Layouts
 import QtQuick.Window
 
 import "components"
+import "settings" as SettingsViews
 
 ApplicationWindow {
     id: window
@@ -18,6 +19,25 @@ ApplicationWindow {
 
     font.family: "Segoe UI"
     font.pixelSize: 14
+
+    SettingsViews.SettingsWindow {
+        id: settingsWindow
+    }
+
+    PermissionDialog {
+        id: permissionDialog
+        onResolved: allowed => chatService.resolvePermission(allowed)
+    }
+
+    Connections {
+        target: chatService
+
+        function onPermissionRequested(capability, path) {
+            permissionDialog.capability = capability
+            permissionDialog.targetPath = path
+            permissionDialog.open()
+        }
+    }
 
     RowLayout {
         anchors.fill: parent
@@ -52,6 +72,7 @@ ApplicationWindow {
                         font.pixelSize: 17
                         ToolTip.visible: hovered
                         ToolTip.text: qsTr("设置")
+                        onClicked: settingsWindow.show()
                     }
                 }
 
@@ -125,6 +146,7 @@ ApplicationWindow {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 hasSession: sessionService.hasCurrentSession
+                model: chatService.messageModel
             }
 
             ComposerBar {
@@ -132,6 +154,18 @@ ApplicationWindow {
                 objectName: "composerBar"
                 Layout.fillWidth: true
                 enabled: sessionService.hasCurrentSession
+                modelChoices: modelService.configuredModels
+                selectedModel: sessionService.currentModelId
+                thinkingStrength: sessionService.thinkingStrength
+                executionMode: sessionService.executionMode
+                fullAccess: sessionService.fullAccess
+                running: chatService.running
+                onModelSelected: sessionService.setCurrentModel(value)
+                onThinkingSelected: sessionService.setThinkingStrength(value)
+                onExecutionModeSelected: sessionService.setExecutionMode(value)
+                onFullAccessChangedByUser: sessionService.setFullAccess(enabled)
+                onSendRequested: text => chatService.sendMessage(text)
+                onStopRequested: chatService.stop()
             }
         }
     }

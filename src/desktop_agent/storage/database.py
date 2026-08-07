@@ -12,6 +12,9 @@ CREATE TABLE IF NOT EXISTS sessions (
     title TEXT NOT NULL,
     workspace_path TEXT NOT NULL,
     associated_directory TEXT,
+    current_model_id TEXT,
+    thinking_strength TEXT,
+    execution_mode TEXT NOT NULL DEFAULT 'local' CHECK (execution_mode IN ('none', 'local')),
     status TEXT NOT NULL CHECK (status IN ('active', 'archived')),
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
@@ -68,6 +71,12 @@ class Database:
         columns = {row["name"] for row in self.connection.execute("PRAGMA table_info(sessions)")}
         if "associated_directory" not in columns:
             self.connection.execute("ALTER TABLE sessions ADD COLUMN associated_directory TEXT")
+        if "current_model_id" not in columns:
+            self.connection.execute("ALTER TABLE sessions ADD COLUMN current_model_id TEXT")
+        if "thinking_strength" not in columns:
+            self.connection.execute("ALTER TABLE sessions ADD COLUMN thinking_strength TEXT")
+        if "execution_mode" not in columns:
+            self.connection.execute("ALTER TABLE sessions ADD COLUMN execution_mode TEXT NOT NULL DEFAULT 'local'")
         message_columns = {row["name"] for row in self.connection.execute("PRAGMA table_info(messages)")}
         if "tool_calls_json" not in message_columns:
             self.connection.execute("ALTER TABLE messages ADD COLUMN tool_calls_json TEXT NOT NULL DEFAULT '[]'")

@@ -146,6 +146,7 @@ async def test_provider_error_is_visible_and_not_retried(loop_context):
     assert len(provider.requests) == 1
     assert events[-1].type == "turn_stopped"
     assert "provider failed" in events[-1].data["error"]
+    assert "provider failed" in repo.list_messages(session.id)[-1].content
 
 
 @pytest.mark.asyncio

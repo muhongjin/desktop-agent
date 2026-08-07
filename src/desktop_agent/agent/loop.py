@@ -126,7 +126,10 @@ class AgentLoop:
                 yield AgentEvent("turn_stopped", {"message_id": draft.id})
                 return
             except ProviderError as error:
-                self.repository.update_message(draft.id, accumulated, MessageStatus.STOPPED, completion_marker=True)
+                visible_error = f"{accumulated}\n\n错误：{error}" if accumulated else f"错误：{error}"
+                self.repository.update_message(
+                    draft.id, visible_error, MessageStatus.STOPPED, completion_marker=True
+                )
                 yield AgentEvent("turn_stopped", {"message_id": draft.id, "error": str(error)})
                 return
 
@@ -283,6 +286,11 @@ class AgentLoop:
             payload = asdict(result)
             raw = json.dumps(payload, ensure_ascii=False, default=str)
             return result.diff_summary if result.data is None else str(result.data), raw
+        if hasattr(result, "stdout") and hasattr(result, "stderr"):
+            payload = asdict(result)
+            raw = json.dumps(payload, ensure_ascii=False, default=str)
+            normalized = "\n".join(part for part in (result.stdout, result.stderr) if part).strip()
+            return normalized or f"Process exited with code {result.exit_code}", raw
         if isinstance(result, str):
             return result, result
         raw = json.dumps(result, ensure_ascii=False, default=str)

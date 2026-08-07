@@ -32,6 +32,9 @@ class Session:
     title: str
     workspace_path: str
     associated_directory: str | None
+    current_model_id: str | None
+    thinking_strength: str | None
+    execution_mode: str
     status: SessionStatus
     created_at: datetime
     updated_at: datetime

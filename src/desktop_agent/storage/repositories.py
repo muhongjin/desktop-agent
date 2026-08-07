@@ -59,13 +59,33 @@ class Repository:
     def __init__(self, database: Database):
         self.database = database
 
-    def create_session(self, title: str, workspace_path: str) -> Session:
-        session_id, now = _id(), _now()
+    def create_session(
+        self,
+        title: str,
+        workspace_path: str,
+        current_model_id: str | None = None,
+        thinking_strength: str | None = None,
+        execution_mode: str = "local",
+        session_id: str | None = None,
+    ) -> Session:
+        session_id, now = session_id or _id(), _now()
         with self.database.transaction():
             self.database.execute(
-                "INSERT INTO sessions (id, title, workspace_path, associated_directory, status, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (session_id, title, workspace_path, None, SessionStatus.ACTIVE, now, now),
+                "INSERT INTO sessions (id, title, workspace_path, associated_directory, current_model_id, "
+                "thinking_strength, execution_mode, status, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    session_id,
+                    title,
+                    workspace_path,
+                    None,
+                    current_model_id,
+                    thinking_strength,
+                    execution_mode,
+                    SessionStatus.ACTIVE,
+                    now,
+                    now,
+                ),
             )
         return self.get_session(session_id)
 
@@ -78,6 +98,9 @@ class Repository:
             title=row["title"],
             workspace_path=row["workspace_path"],
             associated_directory=row["associated_directory"],
+            current_model_id=row["current_model_id"],
+            thinking_strength=row["thinking_strength"],
+            execution_mode=row["execution_mode"],
             status=SessionStatus(row["status"]),
             created_at=_timestamp(row["created_at"]),
             updated_at=_timestamp(row["updated_at"]),
@@ -111,6 +134,32 @@ class Repository:
             self.database.execute(
                 "UPDATE sessions SET associated_directory = ?, updated_at = ? WHERE id = ?",
                 (path, _now(), session_id),
+            )
+        return self.get_session(session_id)
+
+    def update_session_preferences(
+        self,
+        session_id: str,
+        *,
+        model_id: str | None = None,
+        thinking_strength: str | None = None,
+        execution_mode: str | None = None,
+    ) -> Session:
+        session = self.get_session(session_id)
+        if session is None:
+            raise KeyError(f"Unknown session: {session_id}")
+        values = (
+            session.current_model_id if model_id is None else model_id,
+            session.thinking_strength if thinking_strength is None else thinking_strength,
+            session.execution_mode if execution_mode is None else execution_mode,
+            _now(),
+            session_id,
+        )
+        with self.database.transaction():
+            self.database.execute(
+                "UPDATE sessions SET current_model_id = ?, thinking_strength = ?, execution_mode = ?, "
+                "updated_at = ? WHERE id = ?",
+                values,
             )
         return self.get_session(session_id)
 
@@ -276,6 +325,25 @@ class Repository:
                     config.updated_at.isoformat(),
                 ),
             )
+
+    def get_provider_config(self, provider_id: str) -> ProviderConfig | None:
+        row = self.database.execute(
+            "SELECT * FROM provider_configs WHERE provider_id = ?", (provider_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        return ProviderConfig(
+            provider_id=row["provider_id"],
+            display_name=row["display_name"],
+            base_url=row["base_url"],
+            config=json.loads(row["config_json"]),
+            created_at=_timestamp(row["created_at"]),
+            updated_at=_timestamp(row["updated_at"]),
+        )
+
+    def list_provider_configs(self) -> list[ProviderConfig]:
+        rows = self.database.execute("SELECT provider_id FROM provider_configs ORDER BY display_name").fetchall()
+        return [self.get_provider_config(row["provider_id"]) for row in rows]
 
     def set_app_setting(self, key: str, value: Any) -> None:
         with self.database.transaction():

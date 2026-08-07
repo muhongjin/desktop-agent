@@ -68,7 +68,7 @@ class AgentLoop:
         request_params: dict[str, Any] | None = None,
         stop_event: asyncio.Event | None = None,
     ) -> AsyncIterator[AgentEvent]:
-        self.repository.append_message(
+        user_message = self.repository.append_message(
             session_id,
             MessageRole.USER,
             content,
@@ -76,6 +76,7 @@ class AgentLoop:
             thinking_strength=thinking_strength,
             request_params=request_params,
         )
+        first_turn = True
         while True:
             draft = self.repository.append_message(
                 session_id,
@@ -87,6 +88,11 @@ class AgentLoop:
                 status=MessageStatus.STOPPED,
                 completion_marker=False,
             )
+            yield AgentEvent(
+                "turn_started",
+                {"messages": [user_message, draft] if first_turn else [draft]},
+            )
+            first_turn = False
             session = self.repository.get_session(session_id)
             history = [
                 message
@@ -110,6 +116,8 @@ class AgentLoop:
                 tools=schemas,
             )
             accumulated = ""
+            last_persist = asyncio.get_running_loop().time()
+            pending_chars = 0
             final_turn = None
             try:
                 stream = self.provider.stream_chat(
@@ -122,10 +130,25 @@ class AgentLoop:
                 async for event in self._stream_until_stopped(stream, stop_event):
                     if isinstance(event, TextDelta):
                         accumulated += event.text
-                        self.repository.update_message(
-                            draft.id, accumulated, MessageStatus.STOPPED, completion_marker=False
+                        pending_chars += len(event.text)
+                        now = asyncio.get_running_loop().time()
+                        if pending_chars >= 128 or now - last_persist >= 0.1:
+                            self.repository.update_message(
+                                draft.id,
+                                accumulated,
+                                MessageStatus.STOPPED,
+                                completion_marker=False,
+                            )
+                            last_persist = now
+                            pending_chars = 0
+                        yield AgentEvent(
+                            "text_delta",
+                            {
+                                "message_id": draft.id,
+                                "text": event.text,
+                                "content": accumulated,
+                            },
                         )
-                        yield AgentEvent("text_delta", {"message_id": draft.id, "text": event.text})
                     elif isinstance(event, AssistantTurn):
                         final_turn = event
             except TurnStopped:

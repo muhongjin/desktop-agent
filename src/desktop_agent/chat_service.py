@@ -1,5 +1,6 @@
 import asyncio
 from contextlib import suppress
+from dataclasses import replace
 from pathlib import Path
 
 from PySide6.QtCore import Property, QAbstractListModel, QModelIndex, QObject, Qt, Signal, Slot
@@ -70,6 +71,29 @@ class MessageListModel(QAbstractListModel):
                         self.details[message.id] = run.raw_output
         self.endResetModel()
 
+    def update_message_content(self, message_id: str, content: str) -> None:
+        for row, message in enumerate(self.messages):
+            if message.id != message_id:
+                continue
+            self.messages[row] = replace(message, content=content)
+            index = self.index(row, 0)
+            self.dataChanged.emit(index, index, [self.ContentRole])
+            return
+
+    def append_messages(self, messages) -> None:
+        existing = {message.id for message in self.messages}
+        additions = [
+            message
+            for message in messages
+            if message.session_id == self.session_id and message.id not in existing
+        ]
+        if not additions:
+            return
+        first = len(self.messages)
+        self.beginInsertRows(QModelIndex(), first, first + len(additions) - 1)
+        self.messages.extend(additions)
+        self.endInsertRows()
+
 
 class ChatService(QObject):
     runningChanged = Signal()
@@ -120,13 +144,11 @@ class ChatService(QObject):
     def sendMessage(self, content: str) -> None:
         if self._running or not content.strip() or not self.sessions.currentSessionId:
             return
-        session = self.repository.get_session(self.sessions.currentSessionId)
-        if session is None or not session.current_model_id:
-            return
         self._running = True
         self.runningChanged.emit()
         self._stop_event = asyncio.Event()
-        self._task = asyncio.create_task(self._run(session, content.strip()))
+        session_id = self.sessions.currentSessionId
+        self._task = asyncio.create_task(self._run(session_id, content.strip()))
         self._task.add_done_callback(self._finished)
 
     @Slot()
@@ -143,12 +165,17 @@ class ChatService(QObject):
         if self._permission_future is not None and not self._permission_future.done():
             self._permission_future.set_result(allowed)
 
-    async def _run(self, session, content: str) -> None:
+    async def _run(self, session_id: str, content: str) -> None:
+        await asyncio.sleep(0)
+        session = self.repository.get_session(session_id)
+        if session is None or not session.current_model_id:
+            return
         provider_id, model_id = session.current_model_id.split(":", 1)
         config = self.repository.get_provider_config(provider_id)
         if config is None:
             return
-        provider = self.provider_factory(config.base_url, self.credentials.get(provider_id))
+        api_key = await asyncio.to_thread(self.credentials.get, provider_id)
+        provider = self.provider_factory(config.base_url, api_key)
         access = self._access(session)
         files = FileTools(self.permission_broker, access)
         registry = {} if self.safe_mode else file_tool_registry(files)
@@ -168,7 +195,7 @@ class ChatService(QObject):
             self._confirm_permission,
         )
         try:
-            async for _ in loop.send_message(
+            async for event in loop.send_message(
                 session.id,
                 content,
                 model_id=model_id,
@@ -177,7 +204,14 @@ class ChatService(QObject):
                 stop_event=self._stop_event,
             ):
                 if self.sessions.currentSessionId == session.id:
-                    self.messages.load(session.id)
+                    if event.type == "turn_started":
+                        self.messages.append_messages(event.data["messages"])
+                    elif event.type == "text_delta":
+                        self.messages.update_message_content(
+                            event.data["message_id"], event.data.get("content", "")
+                        )
+                    elif event.type == "tool_finished":
+                        self.messages.load(session.id)
         finally:
             if shell is not None:
                 shell.close()

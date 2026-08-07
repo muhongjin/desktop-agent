@@ -25,8 +25,6 @@ pyz = PYZ(analysis.pure)
 executable = EXE(
     pyz,
     analysis.scripts,
-    analysis.binaries,
-    analysis.datas,
     [],
     name="DesktopAgent",
     debug=False,
@@ -39,4 +37,15 @@ executable = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    exclude_binaries=True,
+)
+
+COLLECT(
+    executable,
+    analysis.binaries,
+    analysis.datas,
+    strip=False,
+    upx=True,
+    upx_exclude=[],
+    name="DesktopAgent",
 )

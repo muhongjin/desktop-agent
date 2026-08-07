@@ -59,7 +59,11 @@ async def test_loop_streams_text_and_preserves_model_snapshot(loop_context):
     ]
     messages = repo.list_messages(session.id)
     assistant = messages[-1]
-    assert [event.type for event in events] == ["text_delta", "turn_finished"]
+    assert [event.type for event in events] == [
+        "turn_started",
+        "text_delta",
+        "turn_finished",
+    ]
     assert assistant.content == "hello"
     assert assistant.status is MessageStatus.COMPLETE
     assert assistant.model_id == "deepseek-chat"
@@ -85,8 +89,10 @@ async def test_tool_call_passes_permission_and_persists_context(loop_context):
     ]
     assert (access.workspace / "answer.txt").read_text() == "42"
     assert [event.type for event in events] == [
+        "turn_started",
         "tool_started",
         "tool_finished",
+        "turn_started",
         "text_delta",
         "turn_finished",
     ]
@@ -170,3 +176,29 @@ async def test_none_mode_exposes_only_read_tools(loop_context):
     ]
     names = {tool["function"]["name"] for tool in provider.requests[0]["tools"]}
     assert names == {"list_files", "read_file"}
+
+
+@pytest.mark.asyncio
+async def test_streaming_batches_partial_message_writes(loop_context):
+    _, repo, session, access, broker, registry = loop_context
+    deltas = [TextDelta("x") for _ in range(100)]
+    provider = SequenceProvider([[*deltas, AssistantTurn("x" * 100, (), "stop")]])
+    original_update = repo.update_message
+    update_count = 0
+
+    def counted_update(*args, **kwargs):
+        nonlocal update_count
+        update_count += 1
+        return original_update(*args, **kwargs)
+
+    repo.update_message = counted_update
+    loop = AgentLoop(repo, PromptComposer(), provider, broker, registry)
+    _ = [
+        event
+        async for event in loop.send_message(
+            session.id, "hi", model_id="model-a", thinking_strength=None, access=access
+        )
+    ]
+
+    assert update_count <= 10
+    assert repo.list_messages(session.id)[-1].content == "x" * 100

@@ -64,4 +64,4 @@ SQLite 数据库和自动工作区位于 `platformdirs.user_data_dir("DesktopAge
 uv run pyinstaller installer/desktop-agent.spec --noconfirm
 ```
 
-生成的无控制台 Windows 程序位于 `dist/DesktopAgent.exe`。
+生成的无控制台 Windows 程序位于 `dist/DesktopAgent/DesktopAgent.exe`。目录发行避免每次启动解压整个运行时，启动速度更快；请连同整个 `DesktopAgent` 目录一起分发。

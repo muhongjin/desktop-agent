@@ -114,3 +114,10 @@ def test_session_preference_changes_do_not_rewrite_message_snapshot(repository, 
     assert updated.thinking_strength == "high"
     assert persisted.model_id == message.model_id == "model-a"
     assert persisted.thinking_strength == message.thinking_strength == "medium"
+
+
+def test_database_records_schema_version(repository):
+    row = repository.database.execute(
+        "SELECT value FROM schema_meta WHERE key = 'schema_version'"
+    ).fetchone()
+    assert row["value"] == "3"

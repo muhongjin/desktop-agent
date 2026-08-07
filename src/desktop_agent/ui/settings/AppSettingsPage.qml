@@ -35,6 +35,22 @@ Item {
             onActivated: settingsService.setValue("shell_mode", ["auto", "windows-powershell", "pwsh"][currentIndex])
         }
 
+        Label { text: qsTr("日志目录") }
+        RowLayout {
+            Layout.fillWidth: true
+            TextField {
+                id: logDirectory
+                objectName: "logDirectoryInput"
+                text: settingsService.logDirectory
+                selectByMouse: true
+                Layout.fillWidth: true
+            }
+            Button {
+                text: qsTr("保存")
+                onClicked: settingsService.setValue("log_directory", logDirectory.text)
+            }
+        }
+
         Item { Layout.fillHeight: true }
     }
 }

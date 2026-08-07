@@ -176,7 +176,8 @@ class ChatService(QObject):
                 access=access,
                 stop_event=self._stop_event,
             ):
-                self.messages.load(session.id)
+                if self.sessions.currentSessionId == session.id:
+                    self.messages.load(session.id)
         finally:
             if shell is not None:
                 shell.close()

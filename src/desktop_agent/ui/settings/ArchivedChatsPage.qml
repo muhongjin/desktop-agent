@@ -3,6 +3,24 @@ import QtQuick.Controls
 import QtQuick.Layouts
 
 Item {
+    id: root
+    property string pendingDeleteId: ""
+
+    Dialog {
+        id: deleteDialog
+        title: qsTr("删除已归档聊天")
+        modal: true
+        anchors.centerIn: parent
+        standardButtons: Dialog.Ok | Dialog.Cancel
+        onAccepted: archiveService.deletePermanently(root.pendingDeleteId)
+
+        Label {
+            text: qsTr("聊天记录将删除，自动工作区会移入系统回收站。")
+            wrapMode: Text.Wrap
+            width: 380
+        }
+    }
+
     ColumnLayout {
         anchors.fill: parent
         anchors.margins: 28
@@ -40,7 +58,10 @@ Item {
                     }
                     Button {
                         text: qsTr("删除")
-                        onClicked: archiveService.deletePermanently(sessionId)
+                        onClicked: {
+                            root.pendingDeleteId = sessionId
+                            deleteDialog.open()
+                        }
                     }
                 }
             }

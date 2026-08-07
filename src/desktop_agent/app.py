@@ -206,7 +206,7 @@ class ApplicationServices(QObject):
         self.workspaces = workspaces
         self.credentials = KeyringCredentialStore()
         self.permissions = PermissionBroker()
-        self.settings = SettingsService(repository)
+        self.settings = SettingsService(repository, paths.data_dir)
         self.models = ModelService(repository, self.credentials)
         self.sessions = SessionService(repository, workspaces, self.settings)
         self.archive = ArchiveService(repository, workspaces, self.sessions.sessions)
@@ -221,6 +221,7 @@ class ApplicationServices(QObject):
             safe_mode,
         )
         self.sessions.sessionArchived.connect(self.archive.archived.refresh)
+        self.sessions.sessionArchived.connect(self.chat.stop)
 
 
 async def build_application(

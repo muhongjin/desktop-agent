@@ -88,6 +88,10 @@ class Database:
             )
         if "tool_call_id" not in message_columns:
             self.connection.execute("ALTER TABLE messages ADD COLUMN tool_call_id TEXT")
+        self.connection.execute(
+            "INSERT INTO schema_meta (key, value) VALUES ('schema_version', '3') "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value"
+        )
         self.connection.commit()
 
     def execute(self, sql: str, parameters: tuple[Any, ...] = ()) -> sqlite3.Cursor:

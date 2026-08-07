@@ -24,9 +24,10 @@ class SettingsService(QObject):
     systemPromptChanged = Signal()
     settingsChanged = Signal()
 
-    def __init__(self, repository):
+    def __init__(self, repository, data_dir: Path | None = None):
         super().__init__()
         self.repository = repository
+        self.data_dir = data_dir
 
     def get(self, key: str, default=None):
         setting = self.repository.get_app_setting(key)
@@ -47,6 +48,11 @@ class SettingsService(QObject):
     @Property(bool, notify=settingsChanged)
     def startAtLogin(self):
         return bool(self.get("start_at_login", False))
+
+    @Property(str, notify=settingsChanged)
+    def logDirectory(self):
+        fallback = str(self.data_dir / "logs") if self.data_dir is not None else ""
+        return self.get("log_directory", fallback)
 
     @Slot(str)
     def saveSystemPrompt(self, value: str) -> None:

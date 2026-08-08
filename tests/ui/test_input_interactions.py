@@ -1,5 +1,6 @@
 import pytest
-from PySide6.QtCore import QMetaObject, QObject, Qt
+from PySide6.QtCore import QMetaObject, QObject, QPointF, Qt
+from PySide6.QtQml import QQmlEngine, QQmlExpression
 from PySide6.QtTest import QSignalSpy, QTest
 
 from desktop_agent.app import build_application
@@ -83,5 +84,35 @@ async def test_permission_and_session_navigation_controls_are_keyboard_reachable
     assert rejected.at(0) == ["deny"]
     assert permission_dialog.property("opened") is False
 
+    root.close()
+    engine.deleteLater()
+
+
+@pytest.mark.asyncio
+async def test_session_context_menu_opens_on_right_click(qapp, tmp_path):
+    paths = LocalPaths(tmp_path, tmp_path / "agent.sqlite3", tmp_path / "workspaces")
+    engine = await build_application(paths=paths)
+    root = engine.rootObjects()[0]
+    session_id = engine._services.sessions.createSession()
+    session_list = root.findChild(QObject, "sessionList")
+    qapp.processEvents()
+
+    context = QQmlEngine.contextForObject(session_list)
+    delegate, is_undefined = QQmlExpression(
+        context, session_list, "itemAtIndex(0)"
+    ).evaluate()
+    assert is_undefined is False
+    position = delegate.mapToScene(
+        QPointF(delegate.width() / 2, delegate.height() / 2)
+    ).toPoint()
+
+    QTest.mouseClick(root, Qt.RightButton, Qt.NoModifier, position)
+    qapp.processEvents()
+
+    menu = root.findChild(QObject, "sessionContextMenu")
+    assert menu.property("opened") is True
+    assert session_list.property("contextSessionId") == session_id
+
+    QTest.keyClick(root, Qt.Key_Escape)
     root.close()
     engine.deleteLater()

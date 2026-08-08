@@ -177,38 +177,10 @@ ApplicationWindow {
                     model: sessionService.activeSessions
                     currentSessionId: sessionService.currentSessionId
                     onSessionSelected: sessionService.selectSession(sessionId)
-                }
-
-                Button {
-                    id: archiveButton
-                    objectName: "archiveButton"
-                    text: qsTr("归档当前对话")
-                    enabled: sessionService.hasCurrentSession
-                    flat: true
-                    activeFocusOnTab: true
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: UI.Theme.controlHeight
-                    onClicked: sessionService.archiveCurrent()
-
-                    background: Rectangle {
-                        radius: UI.Theme.radiusMedium
-                        color: archiveButton.down ? UI.Theme.surfacePressed
-                              : archiveButton.hovered ? UI.Theme.surfaceHover : "transparent"
-                        border.color: archiveButton.visualFocus
-                                ? UI.Theme.focus : "transparent"
-                        border.width: archiveButton.visualFocus
-                                ? UI.Theme.focusWidth : 0
-                    }
-
-                    contentItem: Label {
-                        text: archiveButton.text
-                        color: archiveButton.enabled ? UI.Theme.textSecondary : UI.Theme.disabled
-                        font.family: UI.Theme.fontFamily
-                        font.pixelSize: UI.Theme.fontBody
-                        horizontalAlignment: Text.AlignLeft
-                        verticalAlignment: Text.AlignVCenter
-                        leftPadding: UI.Theme.space8
-                    }
+                    onArchiveRequested: sessionId => sessionService.archiveSession(sessionId)
+                    onWorkspaceRequested: sessionId => sessionService.openWorkspace(sessionId)
+                    onRenameRequested: (sessionId, title) =>
+                        sessionService.renameSession(sessionId, title)
                 }
             }
         }
@@ -261,27 +233,6 @@ ApplicationWindow {
                         }
                     }
 
-                    Button {
-                        id: openWorkspaceButton
-                        objectName: "openWorkspaceButton"
-                        text: qsTr("打开工作区")
-                        enabled: sessionService.hasCurrentSession
-                        activeFocusOnTab: true
-                        ToolTip.visible: hovered
-                        ToolTip.text: qsTr("在文件资源管理器中打开")
-                        onClicked: sessionService.openCurrentWorkspace()
-
-                        background: Rectangle {
-                            radius: UI.Theme.radiusMedium
-                            color: openWorkspaceButton.down ? UI.Theme.surfacePressed
-                                  : openWorkspaceButton.hovered ? UI.Theme.surfaceHover
-                                  : UI.Theme.surface
-                            border.color: openWorkspaceButton.visualFocus
-                                    ? UI.Theme.focus : UI.Theme.border
-                            border.width: openWorkspaceButton.visualFocus
-                                    ? UI.Theme.focusWidth : 1
-                        }
-                    }
                 }
             }
 

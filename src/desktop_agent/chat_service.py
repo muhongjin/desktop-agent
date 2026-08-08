@@ -155,6 +155,7 @@ class ChatService(QObject):
         self._permission_future: asyncio.Future | None = None
         self._shell: PowerShellExecutor | None = None
         self._active_session_id = ""
+        self._running_session_id = ""
         self._session_permissions: dict[str, set[str]] = {}
         self.sessions.currentSessionChanged.connect(self.reload)
         self.reload()
@@ -202,6 +203,7 @@ class ChatService(QObject):
         )
         self.messages.append_messages((user_message, draft))
         self._running = True
+        self._running_session_id = session.id
         self.runningChanged.emit()
         self._stop_event = asyncio.Event()
         self._task = asyncio.create_task(
@@ -224,6 +226,11 @@ class ChatService(QObject):
             self._permission_future.set_result("deny")
         if self._shell is not None:
             self._shell.stop()
+
+    @Slot(str)
+    def stopSession(self, session_id: str) -> None:
+        if session_id == self._running_session_id:
+            self.stop()
 
     @Slot()
     def shutdown(self) -> None:
@@ -359,6 +366,9 @@ class ChatService(QObject):
                     with suppress(Exception):
                         await provider.close()
         title = self._clean_title(generated, content)
+        current_session = self.repository.get_session(session.id)
+        if current_session is None or current_session.title != "新对话":
+            return
         try:
             self.repository.set_unique_session_title(session.id, title)
         except KeyError:
@@ -424,5 +434,6 @@ class ChatService(QObject):
         self._running = False
         self._stop_event = None
         self._task = None
+        self._running_session_id = ""
         self.messages.load(self.sessions.currentSessionId)
         self.runningChanged.emit()

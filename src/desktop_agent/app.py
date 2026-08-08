@@ -140,27 +140,35 @@ class SessionService(QObject):
         self.currentSessionChanged.emit()
         return session.id
 
-    @Slot()
-    def archiveCurrent(self) -> None:
-        if not self._current_session_id:
+    @Slot(str)
+    def archiveSession(self, session_id: str) -> None:
+        if not session_id or self.repository.get_session(session_id) is None:
             return
-        archived_id = self._current_session_id
-        self._full_access.discard(archived_id)
-        self.repository.archive_session(archived_id)
-        self.sessionArchived.emit(archived_id)
+        was_current = session_id == self._current_session_id
+        self._full_access.discard(session_id)
+        self.repository.archive_session(session_id)
+        self.sessionArchived.emit(session_id)
         self.sessions.refresh()
-        self._current_session_id = self.sessions.sessions[0].id if self.sessions.sessions else ""
-        self.currentSessionChanged.emit()
+        if was_current:
+            self._current_session_id = (
+                self.sessions.sessions[0].id if self.sessions.sessions else ""
+            )
+            self.currentSessionChanged.emit()
 
-    @Slot()
-    def openCurrentWorkspace(self) -> None:
-        if not self._current_session_id:
-            return
-        session = self.repository.get_session(self._current_session_id)
+    @Slot(str)
+    def openWorkspace(self, session_id: str) -> None:
+        session = self.repository.get_session(session_id)
         if session is None:
             return
         Path(session.workspace_path).mkdir(parents=True, exist_ok=True)
         os.startfile(session.workspace_path)
+
+    @Slot(str, str)
+    def renameSession(self, session_id: str, title: str) -> None:
+        if self.repository.get_session(session_id) is None or not title.strip():
+            return
+        self.repository.set_unique_session_title(session_id, title)
+        self.refreshSessionTitle(session_id)
 
     @Slot(str)
     def setCurrentModel(self, model_id: str) -> None:
@@ -234,7 +242,7 @@ class ApplicationServices(QObject):
         )
         self.chat.sessionTitleChanged.connect(self.sessions.refreshSessionTitle)
         self.sessions.sessionArchived.connect(self.archive.archived.refresh)
-        self.sessions.sessionArchived.connect(self.chat.stop)
+        self.sessions.sessionArchived.connect(self.chat.stopSession)
         self.sessions.sessionArchived.connect(self.chat.clearSessionPermissions)
 
 

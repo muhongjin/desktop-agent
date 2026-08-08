@@ -267,6 +267,45 @@ async def test_credential_failure_finishes_optimistic_draft(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_manual_rename_wins_over_pending_generated_title(tmp_path):
+    database = Database(tmp_path / "agent.sqlite3")
+    repo = Repository(database)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    session = repo.create_session(
+        "新对话", str(workspace), current_model_id="openai:model-a"
+    )
+    now = datetime.now(UTC)
+    repo.set_provider_config(
+        ProviderConfig(
+            "openai", "OpenAI", "https://example.test/v1", {"models": ["model-a"]}, now, now
+        )
+    )
+    title_provider = DelayedTitleProvider()
+    service = ChatService(
+        repo,
+        Sessions(session.id),
+        None,
+        Settings(),
+        PermissionBroker(),
+        Credentials(),
+        safe_mode=True,
+        provider_factory=lambda base_url, api_key: Provider(),
+        title_provider_factory=lambda base_url, api_key: title_provider,
+    )
+
+    service.sendMessage("设计桌面 Agent")
+    await title_provider.started.wait()
+    repo.set_unique_session_title(session.id, "我的名称")
+    title_provider.release.set()
+    while service.running or service._title_tasks:
+        await asyncio.sleep(0.01)
+
+    assert repo.get_session(session.id).title == "我的名称"
+    database.close()
+
+
+@pytest.mark.asyncio
 async def test_title_failure_uses_first_message_without_affecting_reply(tmp_path):
     database = Database(tmp_path / "agent.sqlite3")
     repo = Repository(database)

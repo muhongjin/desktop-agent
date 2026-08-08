@@ -139,7 +139,7 @@ def test_pending_assistant_shows_thinking_until_first_token(qapp, tmp_path):
 
     context = QQmlEngine.contextForObject(chat)
     delegate, is_undefined = QQmlExpression(
-        context, chat, "timeline.itemAtIndex(1)"
+        context, chat, "messageAt(1)"
     ).evaluate()
     assert is_undefined is False
     indicator = delegate.findChild(QObject, "thinkingIndicator")
@@ -149,6 +149,50 @@ def test_pending_assistant_shows_thinking_until_first_token(qapp, tmp_path):
     model.update_message_content(draft.id, "首个 token")
     qapp.processEvents()
     assert indicator.property("visible") is False
+
+    view.close()
+    view.deleteLater()
+    database.close()
+
+
+def test_scrollbar_size_and_position_mapping_stay_stable(qapp, tmp_path):
+    database = Database(tmp_path / "agent.sqlite3")
+    repository = Repository(database)
+    session = repository.create_session("Draft", str(tmp_path / "workspace"))
+    for index in range(40):
+        content = f"消息 {index} " + "不同高度的内容 " * (4 + index % 8 * 5)
+        repository.append_message(session.id, MessageRole.USER, content)
+    model = MessageListModel(repository)
+    model.load(session.id)
+
+    view = QQuickView()
+    view.setResizeMode(QQuickView.SizeRootObjectToView)
+    view.setInitialProperties({"model": model})
+    view.setSource(QUrl.fromLocalFile(str(COMPONENTS / "ChatView.qml")))
+    view.resize(640, 360)
+    view.show()
+    qapp.processEvents()
+    QTest.qWait(30)
+
+    chat = view.rootObject()
+    timeline = chat.findChild(QObject, "messageTimeline")
+    scrollbar = chat.findChild(QObject, "messageScrollBar")
+    content_height = timeline.property("contentHeight")
+    viewport_height = timeline.property("height")
+    scroll_range = content_height - viewport_height
+    thumb_size = scrollbar.property("size")
+
+    assert scroll_range > 0
+    assert 0 < thumb_size < 1
+    assert timeline.property("contentY") == pytest.approx(scroll_range, abs=1)
+
+    for fraction in (0.25, 0.5, 1.0):
+        timeline.setProperty("contentY", scroll_range * fraction)
+        qapp.processEvents()
+        assert timeline.property("contentHeight") == pytest.approx(content_height)
+        assert scrollbar.property("size") == pytest.approx(thumb_size)
+        normalized_position = scrollbar.property("position") / (1 - thumb_size)
+        assert normalized_position == pytest.approx(fraction, abs=0.01)
 
     view.close()
     view.deleteLater()

@@ -132,7 +132,7 @@ class SessionService(QObject):
             str(workspace),
             current_model_id=self.settings.get("recent_model_id"),
             thinking_strength=self.settings.get("recent_thinking_strength", "medium"),
-            execution_mode=self.settings.get("recent_execution_mode", "local"),
+            execution_mode="local",
             session_id=session_id,
         )
         self.sessions.refresh()
@@ -244,6 +244,12 @@ class ApplicationServices(QObject):
         self.sessions.sessionArchived.connect(self.archive.archived.refresh)
         self.sessions.sessionArchived.connect(self.chat.stopSession)
         self.sessions.sessionArchived.connect(self.chat.clearSessionPermissions)
+        self.sessions.currentSessionChanged.connect(self._warm_current_model)
+        self.models.providerConfigsChanged.connect(self._warm_current_model)
+        self._warm_current_model()
+
+    def _warm_current_model(self) -> None:
+        self.models.warmModel(self.sessions.currentModelId)
 
 
 async def build_application(
@@ -286,4 +292,12 @@ async def build_application(
     if not engine.rootObjects():
         database.close()
         raise RuntimeError(f"Unable to load QML application: {qml_path}")
+    current_model = services.sessions.currentModelId
+    current_provider = ""
+    if ":" in current_model:
+        config_id = current_model.split(":", 1)[0]
+        config = resolved_repository.get_provider_config(config_id)
+        if config is not None:
+            current_provider = config.config.get("provider_type", config.provider_id)
+    services.models.startMetadataRefresh(current_provider)
     return engine

@@ -9,6 +9,7 @@ FocusScope {
 
     property bool hasSession: false
     property bool running: false
+    property string retryStatus: ""
     property alias model: messageRepeater.model
     property alias timeline: messageList
     property bool followingTail: true
@@ -159,10 +160,15 @@ FocusScope {
                             }
 
                             Label {
-                                text: qsTr("正在思考")
+                                id: activityStatusLabel
+                                objectName: "activityStatusLabel"
+                                text: root.retryStatus.length > 0
+                                      ? root.retryStatus : qsTr("正在思考")
                                 color: Theme.textMuted
                                 font.family: Theme.fontFamily
                                 font.pixelSize: Theme.fontBody
+                                wrapMode: Text.Wrap
+                                Layout.fillWidth: true
                                 Layout.alignment: Qt.AlignVCenter
                             }
                         }

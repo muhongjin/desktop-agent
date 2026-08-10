@@ -3,6 +3,7 @@ import json
 import re
 from contextlib import suppress
 from dataclasses import replace
+from inspect import signature
 from pathlib import Path
 
 from keyring.errors import KeyringError
@@ -17,6 +18,7 @@ from desktop_agent.providers.openai_compatible import (
     ProviderError,
     TextDelta,
 )
+from desktop_agent.providers.presets import PRESETS_BY_ID
 from desktop_agent.security.permissions import SessionAccess
 from desktop_agent.tools.files import FileTools
 from desktop_agent.tools.powershell import PowerShellExecutor, ShellUnavailable
@@ -122,6 +124,7 @@ class MessageListModel(QAbstractListModel):
 
 class ChatService(QObject):
     runningChanged = Signal()
+    retryStatusChanged = Signal()
     permissionRequested = Signal(str, str, str)
     sessionTitleChanged = Signal(str)
 
@@ -149,6 +152,7 @@ class ChatService(QObject):
         self.title_provider_factory = title_provider_factory or self.provider_factory
         self.messages = MessageListModel(repository)
         self._running = False
+        self._retry_status = ""
         self._stop_event: asyncio.Event | None = None
         self._task: asyncio.Task | None = None
         self._title_tasks: set[asyncio.Task] = set()
@@ -160,6 +164,42 @@ class ChatService(QObject):
         self.sessions.currentSessionChanged.connect(self.reload)
         self.reload()
 
+    @staticmethod
+    def _provider(factory, config, api_key):
+        timeout = config.config.get("timeout", 120)
+        provider_type = config.config.get("provider_type", config.provider_id)
+        preset = PRESETS_BY_ID.get(provider_type, PRESETS_BY_ID["custom"])
+        api_protocol = config.config.get("api_protocol", preset.api_protocol)
+        try:
+            signature(factory).bind(
+                config.base_url,
+                api_key,
+                timeout=timeout,
+                api_protocol=api_protocol,
+            )
+        except (TypeError, ValueError):
+            try:
+                signature(factory).bind(config.base_url, api_key, timeout=timeout)
+            except (TypeError, ValueError):
+                return factory(config.base_url, api_key)
+            return factory(config.base_url, api_key, timeout=timeout)
+        return factory(
+            config.base_url,
+            api_key,
+            timeout=timeout,
+            api_protocol=api_protocol,
+        )
+
+    async def _acquire_provider(self, factory, provider_id, config, model_id=None):
+        if factory is OpenAICompatibleClient and self.models is not None:
+            try:
+                provider = await self.models.clientFor(provider_id, config, model_id)
+            except TypeError:
+                provider = await self.models.clientFor(provider_id, config)
+            return provider, False
+        api_key = await asyncio.to_thread(self.credentials.get, provider_id)
+        return self._provider(factory, config, api_key), True
+
     @Property(QObject, constant=True)
     def messageModel(self):
         return self.messages
@@ -167,6 +207,16 @@ class ChatService(QObject):
     @Property(bool, notify=runningChanged)
     def running(self):
         return self._running
+
+    @Property(str, notify=retryStatusChanged)
+    def retryStatus(self):
+        return self._retry_status
+
+    def _set_retry_status(self, value: str) -> None:
+        if self._retry_status == value:
+            return
+        self._retry_status = value
+        self.retryStatusChanged.emit()
 
     @Slot()
     def reload(self) -> None:
@@ -184,7 +234,11 @@ class ChatService(QObject):
         config = self.repository.get_provider_config(provider_id)
         if config is None:
             return
-        self._start_title_generation(session, content)
+        generate_title = (
+            session.title == "新对话"
+            and bool(session.current_model_id)
+            and not self.repository.session_has_messages(session.id)
+        )
         user_message = self.repository.append_message(
             session.id,
             MessageRole.USER,
@@ -202,6 +256,7 @@ class ChatService(QObject):
             completion_marker=False,
         )
         self.messages.append_messages((user_message, draft))
+        self._set_retry_status("")
         self._running = True
         self._running_session_id = session.id
         self.runningChanged.emit()
@@ -214,6 +269,7 @@ class ChatService(QObject):
                 model_id,
                 config,
                 (user_message, draft),
+                generate_title,
             )
         )
         self._task.add_done_callback(self._finished)
@@ -237,6 +293,8 @@ class ChatService(QObject):
         self.stop()
         for task in self._title_tasks:
             task.cancel()
+        if self.models is not None:
+            self.models.closeClients()
 
     @Slot(str)
     def resolvePermission(self, decision: str) -> None:
@@ -255,11 +313,13 @@ class ChatService(QObject):
         model_id: str,
         config,
         initial_messages,
+        generate_title: bool,
     ) -> None:
         await asyncio.sleep(0)
         try:
-            api_key = await asyncio.to_thread(self.credentials.get, provider_id)
-            provider = self.provider_factory(config.base_url, api_key)
+            provider, provider_owned = await self._acquire_provider(
+                self.provider_factory, provider_id, config, model_id
+            )
         except (KeyringError, OSError, RuntimeError, TypeError, ValueError) as error:
             draft = initial_messages[1]
             visible_error = f"错误：{error}"
@@ -289,7 +349,9 @@ class ChatService(QObject):
             self.permission_broker,
             registry,
             self._confirm_permission,
+            context_limit=self._model_context_limit(config, model_id),
         )
+        completed = False
         try:
             self._active_session_id = session.id
             async for event in loop.send_message(
@@ -303,26 +365,47 @@ class ChatService(QObject):
             ):
                 if self.sessions.currentSessionId == session.id:
                     if event.type == "turn_started":
+                        self._set_retry_status("")
                         self.messages.append_messages(event.data["messages"])
                     elif event.type == "text_delta":
+                        self._set_retry_status("")
                         self.messages.update_message_content(
                             event.data["message_id"], event.data.get("content", "")
                         )
+                    elif event.type == "retrying":
+                        self.messages.update_message_content(event.data["message_id"], "")
+                        self._set_retry_status(
+                            "连接失败，已重试 "
+                            f"{event.data['retry_count']} 次，正在进行第 "
+                            f"{event.data['attempt']}/{event.data['max_attempts']} 次尝试"
+                        )
                     elif event.type == "tool_finished":
                         self.messages.load(session.id)
+            completed = True
         finally:
             if shell is not None:
                 shell.close()
             self._shell = None
             self._active_session_id = ""
-            await provider.close()
+            if provider_owned:
+                await provider.close()
+        if completed and generate_title:
+            self._start_title_generation(session, content)
+
+    @staticmethod
+    def _model_context_limit(config, model_id: str) -> int | None:
+        settings = config.config.get("model_settings", {})
+        values = settings.get(model_id, {}) if isinstance(settings, dict) else {}
+        if not isinstance(values, dict):
+            return None
+        try:
+            context = int(values.get("context", values.get("context_window", 0)) or 0)
+        except (TypeError, ValueError):
+            return None
+        return context if context > 0 else None
 
     def _start_title_generation(self, session, content: str) -> None:
-        if (
-            session.title != "新对话"
-            or not session.current_model_id
-            or self.repository.session_has_messages(session.id)
-        ):
+        if session.title != "新对话" or not session.current_model_id:
             return
         task = asyncio.create_task(self._generate_title(session, content))
         self._title_tasks.add(task)
@@ -333,10 +416,12 @@ class ChatService(QObject):
         config = self.repository.get_provider_config(provider_id)
         generated = ""
         provider = None
+        provider_owned = False
         if config is not None:
             try:
-                api_key = await asyncio.to_thread(self.credentials.get, provider_id)
-                provider = self.title_provider_factory(config.base_url, api_key)
+                provider, provider_owned = await self._acquire_provider(
+                    self.title_provider_factory, provider_id, config, model_id
+                )
                 parts = []
                 async for event in provider.stream_chat(
                     model_id=model_id,
@@ -362,7 +447,7 @@ class ChatService(QObject):
             except (KeyringError, OSError, ProviderError, RuntimeError, TypeError, ValueError):
                 generated = ""
             finally:
-                if provider is not None:
+                if provider is not None and provider_owned:
                     with suppress(Exception):
                         await provider.close()
         title = self._clean_title(generated, content)
@@ -432,6 +517,7 @@ class ChatService(QObject):
         with suppress(asyncio.CancelledError):
             task.exception()
         self._running = False
+        self._set_retry_status("")
         self._stop_event = None
         self._task = None
         self._running_session_id = ""

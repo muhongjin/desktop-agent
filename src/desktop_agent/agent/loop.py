@@ -1,6 +1,7 @@
 import asyncio
 import inspect
 import json
+import re
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import suppress
 from dataclasses import asdict, dataclass
@@ -41,6 +42,9 @@ PermissionHandler = Callable[
 
 
 class AgentLoop:
+    MAX_ATTEMPTS = 5
+    DEFAULT_RETRY_DELAYS = (0.5, 1.0, 2.0, 4.0)
+
     def __init__(
         self,
         repository,
@@ -49,6 +53,8 @@ class AgentLoop:
         permission_broker: PermissionBroker,
         tool_registry: dict[str, RegisteredTool],
         permission_handler: PermissionHandler | None = None,
+        context_limit: int | None = None,
+        retry_delays: tuple[float, ...] | None = None,
     ):
         self.repository = repository
         self.prompt_composer = prompt_composer
@@ -56,6 +62,8 @@ class AgentLoop:
         self.permission_broker = permission_broker
         self.tool_registry = tool_registry
         self.permission_handler = permission_handler
+        self.context_limit = context_limit
+        self.retry_delays = retry_delays or self.DEFAULT_RETRY_DELAYS
 
     async def send_message(
         self,
@@ -121,68 +129,118 @@ class AgentLoop:
                 workspace=session.workspace_path,
                 associated_directory=session.associated_directory,
                 tools=schemas,
+                context_limit=self.context_limit,
+                truncate=self.context_limit is not None,
             )
             accumulated = ""
             last_persist = asyncio.get_running_loop().time()
             pending_chars = 0
             final_turn = None
-            try:
-                stream = self.provider.stream_chat(
-                    model_id=model_id,
-                    messages=prompt.messages,
-                    thinking_strength=thinking_strength,
-                    tools=prompt.tools,
-                    request_params=request_params,
-                )
-                async for event in self._stream_until_stopped(stream, stop_event):
-                    if isinstance(event, TextDelta):
-                        accumulated += event.text
-                        pending_chars += len(event.text)
-                        now = asyncio.get_running_loop().time()
-                        if pending_chars >= 128 or now - last_persist >= 0.1:
-                            self.repository.update_message(
-                                draft.id,
-                                accumulated,
-                                MessageStatus.STOPPED,
-                                completion_marker=False,
+            context_retry = False
+            attempt = 1
+            while True:
+                try:
+                    if context_retry:
+                        prompt = self.prompt_composer.compose(
+                            history,
+                            workspace=session.workspace_path,
+                            associated_directory=session.associated_directory,
+                            tools=schemas,
+                            context_limit=self.context_limit,
+                            truncate=True,
+                            force_truncate=True,
+                        )
+                    stream = self.provider.stream_chat(
+                        model_id=model_id,
+                        messages=prompt.messages,
+                        thinking_strength=thinking_strength,
+                        tools=prompt.tools,
+                        request_params=request_params,
+                        conversation_id=session_id,
+                    )
+                    async for event in self._stream_until_stopped(stream, stop_event):
+                        if isinstance(event, TextDelta):
+                            accumulated += event.text
+                            pending_chars += len(event.text)
+                            now = asyncio.get_running_loop().time()
+                            if pending_chars >= 128 or now - last_persist >= 0.1:
+                                self.repository.update_message(
+                                    draft.id,
+                                    accumulated,
+                                    MessageStatus.STOPPED,
+                                    completion_marker=False,
+                                )
+                                last_persist = now
+                                pending_chars = 0
+                            yield AgentEvent(
+                                "text_delta",
+                                {
+                                    "message_id": draft.id,
+                                    "text": event.text,
+                                    "content": accumulated,
+                                },
                             )
-                            last_persist = now
-                            pending_chars = 0
+                        elif isinstance(event, AssistantTurn):
+                            final_turn = event
+                    if final_turn is None:
+                        raise ProviderError(
+                            "Provider stream ended unexpectedly", retryable=True
+                        )
+                    break
+                except TurnStopped:
+                    self.repository.update_message(
+                        draft.id, accumulated, MessageStatus.STOPPED, completion_marker=True
+                    )
+                    yield AgentEvent("turn_stopped", {"message_id": draft.id})
+                    return
+                except ProviderError as error:
+                    context_failure = not context_retry and self._is_context_error(error)
+                    if (context_failure or error.retryable) and attempt < self.MAX_ATTEMPTS:
+                        context_retry = context_retry or context_failure
+                        attempt += 1
+                        delay = 0.0 if context_failure else self._retry_delay(attempt)
+                        accumulated = ""
+                        pending_chars = 0
+                        final_turn = None
+                        last_persist = asyncio.get_running_loop().time()
+                        self.repository.update_message(
+                            draft.id,
+                            "",
+                            MessageStatus.STOPPED,
+                            completion_marker=False,
+                        )
                         yield AgentEvent(
-                            "text_delta",
+                            "retrying",
                             {
                                 "message_id": draft.id,
-                                "text": event.text,
-                                "content": accumulated,
+                                "attempt": attempt,
+                                "max_attempts": self.MAX_ATTEMPTS,
+                                "retry_count": attempt - 1,
+                                "delay": delay,
+                                "reason": "context" if context_failure else "connection",
+                                "error": str(error),
                             },
                         )
-                    elif isinstance(event, AssistantTurn):
-                        final_turn = event
-            except TurnStopped:
-                self.repository.update_message(
-                    draft.id, accumulated, MessageStatus.STOPPED, completion_marker=True
-                )
-                yield AgentEvent("turn_stopped", {"message_id": draft.id})
-                return
-            except ProviderError as error:
-                visible_error = (
-                    f"{accumulated}\n\n错误：{error}" if accumulated else f"错误：{error}"
-                )
-                self.repository.update_message(
-                    draft.id, visible_error, MessageStatus.STOPPED, completion_marker=True
-                )
-                yield AgentEvent("turn_stopped", {"message_id": draft.id, "error": str(error)})
-                return
-
-            if final_turn is None:
-                self.repository.update_message(
-                    draft.id, accumulated, MessageStatus.STOPPED, completion_marker=True
-                )
-                yield AgentEvent(
-                    "turn_stopped",
-                    {"message_id": draft.id, "error": "Provider stream ended unexpectedly"},
-                )
-                return
+                        if not await self._wait_for_retry(delay, stop_event):
+                            self.repository.update_message(
+                                draft.id,
+                                "",
+                                MessageStatus.STOPPED,
+                                completion_marker=True,
+                            )
+                            yield AgentEvent("turn_stopped", {"message_id": draft.id})
+                            return
+                        continue
+                    visible_error = (
+                        f"{accumulated}\n\n错误：{error}" if accumulated else f"错误：{error}"
+                    )
+                    self.repository.update_message(
+                        draft.id, visible_error, MessageStatus.STOPPED, completion_marker=True
+                    )
+                    yield AgentEvent(
+                        "turn_stopped", {"message_id": draft.id, "error": str(error)}
+                    )
+                    return
 
             if not final_turn.tool_calls:
                 completed = self.repository.update_message(
@@ -204,6 +262,36 @@ class AgentLoop:
                     yield event
                     if event.type == "turn_stopped":
                         return
+
+    @staticmethod
+    def _is_context_error(error: ProviderError) -> bool:
+        text = str(error).lower()
+        patterns = (
+            r"context.{0,30}(length|window|limit|size)",
+            r"(maximum|max).{0,30}(context|prompt|input).{0,30}(token|length|size)",
+            r"(prompt|input).{0,30}(too long|too large|exceed|超过)",
+            r"too many tokens",
+            r"token limit",
+            r"上下文.{0,20}(超|限制|过长)",
+        )
+        return any(re.search(pattern, text) for pattern in patterns)
+
+    def _retry_delay(self, attempt: int) -> float:
+        index = min(max(0, attempt - 2), len(self.retry_delays) - 1)
+        return self.retry_delays[index]
+
+    @staticmethod
+    async def _wait_for_retry(delay: float, stop_event: asyncio.Event | None) -> bool:
+        if delay <= 0:
+            return stop_event is None or not stop_event.is_set()
+        if stop_event is None:
+            await asyncio.sleep(delay)
+            return True
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=delay)
+        except TimeoutError:
+            return True
+        return False
 
     async def _execute_tool(
         self,

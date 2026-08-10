@@ -23,10 +23,10 @@ FocusScope {
     readonly property bool hasModel: selectedModel.length > 0
     readonly property bool hasConfiguredModels: modelChoices.length > 0
             && modelChoices[0].value !== ""
-    readonly property bool popupOpen: modelSelector.popup.visible
-            || thinkingSelector.popup.visible || executionModeSelector.popup.visible
+    readonly property bool popupOpen: preferencePicker.popupOpen
+            || executionModePicker.popupOpen
 
-    implicitHeight: fullAccess ? 190 : 154
+    implicitHeight: 154
 
     function focusEditor() {
         editor.forceActiveFocus()
@@ -38,6 +38,20 @@ FocusScope {
             return
         root.sendRequested(editor.text)
         editor.clear()
+    }
+
+    function selectExecutionMode(value) {
+        if (value === "all") {
+            if (executionMode !== "local")
+                root.executionModeSelected("local")
+            if (!fullAccess)
+                root.fullAccessChangedByUser(true)
+            return
+        }
+        if (fullAccess)
+            root.fullAccessChangedByUser(false)
+        if (executionMode !== value)
+            root.executionModeSelected(value)
     }
 
     Rectangle {
@@ -52,62 +66,6 @@ FocusScope {
             anchors.topMargin: UI.Theme.space12
             anchors.bottomMargin: UI.Theme.space12
             spacing: UI.Theme.space8
-
-            Rectangle {
-                visible: root.fullAccess
-                Layout.fillWidth: true
-                Layout.preferredHeight: UI.Theme.controlHeight
-                radius: UI.Theme.radiusMedium
-                color: UI.Theme.warningSubtle
-                border.color: UI.Theme.warning
-
-                RowLayout {
-                    anchors.fill: parent
-                    anchors.leftMargin: UI.Theme.space12
-                    anchors.rightMargin: UI.Theme.space4
-                    spacing: UI.Theme.space8
-
-                    Label {
-                        text: qsTr("完全访问已开启 · 仅限当前会话")
-                        color: UI.Theme.warning
-                        font.family: UI.Theme.fontFamily
-                        font.pixelSize: UI.Theme.fontCaption
-                        font.weight: Font.DemiBold
-                        Layout.fillWidth: true
-                        elide: Text.ElideRight
-                    }
-
-                    Button {
-                        id: fullAccessOffButton
-                        objectName: "fullAccessOffButton"
-                        text: qsTr("关闭")
-                        flat: true
-                        activeFocusOnTab: true
-                        onClicked: root.fullAccessChangedByUser(false)
-
-                        background: Rectangle {
-                            radius: UI.Theme.radiusSmall
-                            color: fullAccessOffButton.down ? UI.Theme.surfacePressed
-                                  : fullAccessOffButton.hovered ? UI.Theme.surfaceHover
-                                  : "transparent"
-                            border.color: fullAccessOffButton.visualFocus
-                                    ? UI.Theme.focus : "transparent"
-                            border.width: fullAccessOffButton.visualFocus
-                                    ? UI.Theme.focusWidth : 0
-                        }
-
-                        contentItem: Label {
-                            text: fullAccessOffButton.text
-                            color: UI.Theme.warning
-                            font.family: UI.Theme.fontFamily
-                            font.pixelSize: UI.Theme.fontCaption
-                            font.weight: Font.DemiBold
-                            horizontalAlignment: Text.AlignHCenter
-                            verticalAlignment: Text.AlignVCenter
-                        }
-                    }
-                }
-            }
 
             ScrollView {
                 Layout.fillWidth: true
@@ -154,62 +112,26 @@ FocusScope {
                 Layout.fillWidth: true
                 spacing: UI.Theme.space8
 
-                ComboBox {
-                    id: modelSelector
-                    objectName: "modelSelector"
-                    Layout.preferredWidth: 190
-                    Layout.minimumWidth: 140
-                    model: root.modelChoices
-                    textRole: "display"
-                    valueRole: "value"
-                    activeFocusOnTab: true
-                    currentIndex: {
-                        for (let index = 0; index < count; index++) {
-                            if (valueAt(index) === root.selectedModel)
-                                return index
-                        }
-                        return -1
-                    }
-                    displayText: currentIndex < 0 ? qsTr("选择模型") : currentText
-                    onActivated: {
-                        if (currentValue.length > 0)
-                            root.modelSelected(currentValue)
-                        else
-                            root.configureModelsRequested()
-                    }
+                ModelPreferencePicker {
+                    id: preferencePicker
+                    objectName: "modelPreferencePicker"
+                    Layout.preferredWidth: implicitWidth
+                    Layout.minimumWidth: 148
+                    Layout.maximumWidth: 280
+                    modelChoices: root.modelChoices
+                    selectedModel: root.selectedModel
+                    thinkingStrength: root.thinkingStrength
+                    onModelSelected: value => root.modelSelected(value)
+                    onThinkingSelected: value => root.thinkingSelected(value)
+                    onConfigureModelsRequested: root.configureModelsRequested()
                 }
 
-                ComboBox {
-                    id: thinkingSelector
-                    objectName: "thinkingSelector"
-                    Layout.preferredWidth: 104
-                    model: [qsTr("低思考"), qsTr("中思考"), qsTr("高思考")]
-                    activeFocusOnTab: true
-                    currentIndex: root.thinkingStrength === "low" ? 0
-                            : root.thinkingStrength === "high" ? 2 : 1
-                    onActivated: root.thinkingSelected(["low", "medium", "high"][currentIndex])
-                }
-
-                ComboBox {
-                    id: executionModeSelector
-                    objectName: "executionModeSelector"
-                    Layout.preferredWidth: 104
-                    model: ["none", "local"]
-                    activeFocusOnTab: true
-                    currentIndex: root.executionMode === "none" ? 0 : 1
-                    onActivated: root.executionModeSelected(currentText)
-                }
-
-                CheckBox {
-                    id: fullAccessToggle
-                    objectName: "fullAccessToggle"
-                    visible: !root.fullAccess
-                    text: qsTr("完全访问")
-                    checked: root.fullAccess
-                    activeFocusOnTab: true
-                    ToolTip.visible: hovered
-                    ToolTip.text: qsTr("为当前会话开放工作区外访问；可随时关闭")
-                    onClicked: root.fullAccessChangedByUser(checked)
+                ExecutionModePicker {
+                    id: executionModePicker
+                    objectName: "executionModePicker"
+                    Layout.preferredWidth: implicitWidth
+                    mode: root.fullAccess ? "all" : root.executionMode
+                    onModeSelected: value => root.selectExecutionMode(value)
                 }
 
                 Item {

@@ -69,7 +69,8 @@ async def test_permission_and_session_navigation_controls_are_keyboard_reachable
     assert root.findChild(QObject, "permissionAllowButton") is not None
     assert root.findChild(QObject, "permissionAllowSessionButton") is not None
     assert root.findChild(QObject, "permissionOperationDetail") is not None
-    assert root.findChild(QObject, "fullAccessOffButton") is not None
+    assert root.findChild(QObject, "executionModeSelector") is not None
+    assert root.findChild(QObject, "fullAccessOffButton") is None
 
     rejected = QSignalSpy(permission_dialog.resolved)
     permission_dialog.setProperty("capability", "fs.write")
@@ -110,8 +111,13 @@ async def test_session_context_menu_opens_on_right_click(qapp, tmp_path):
     qapp.processEvents()
 
     menu = root.findChild(QObject, "sessionContextMenu")
+    background = root.findChild(QObject, "sessionContextMenuBackground")
+    rename_item = root.findChild(QObject, "renameSessionMenuItem")
     assert menu.property("opened") is True
     assert session_list.property("contextSessionId") == session_id
+    assert menu.property("width") == 188
+    assert rename_item.property("height") == 40
+    assert background.property("radius") == 8
 
     QTest.keyClick(root, Qt.Key_Escape)
     root.close()

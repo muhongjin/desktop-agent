@@ -143,8 +143,14 @@ def test_pending_assistant_shows_thinking_until_first_token(qapp, tmp_path):
     ).evaluate()
     assert is_undefined is False
     indicator = delegate.findChild(QObject, "thinkingIndicator")
+    activity_label = delegate.findChild(QObject, "activityStatusLabel")
     assert indicator is not None
+    assert activity_label is not None
     assert indicator.property("visible") is True
+
+    chat.setProperty("retryStatus", "连接失败，已重试 1 次，正在进行第 2/5 次尝试")
+    qapp.processEvents()
+    assert activity_label.property("text") == "连接失败，已重试 1 次，正在进行第 2/5 次尝试"
 
     model.update_message_content(draft.id, "首个 token")
     qapp.processEvents()

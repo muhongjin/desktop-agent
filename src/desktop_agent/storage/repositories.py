@@ -390,6 +390,12 @@ class Repository:
         ).fetchall()
         return [self.get_provider_config(row["provider_id"]) for row in rows]
 
+    def delete_provider_config(self, provider_id: str) -> None:
+        with self.database.transaction():
+            self.database.execute(
+                "DELETE FROM provider_configs WHERE provider_id = ?", (provider_id,)
+            )
+
     def set_app_setting(self, key: str, value: Any) -> None:
         with self.database.transaction():
             self.database.execute(

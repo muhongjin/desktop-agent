@@ -57,6 +57,8 @@ ComboBox {
     popup: Popup {
         y: control.height + UI.Theme.space4
         width: control.width
+        focus: true
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutsideParent
         implicitHeight: Math.min(contentItem.implicitHeight + UI.Theme.space8, 280)
         padding: UI.Theme.space4
         contentItem: ListView {

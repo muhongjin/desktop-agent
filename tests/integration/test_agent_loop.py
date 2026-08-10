@@ -163,6 +163,159 @@ async def test_provider_error_is_visible_and_not_retried(loop_context):
 
 
 @pytest.mark.asyncio
+async def test_context_error_retries_once_with_truncated_history(loop_context):
+    _, repo, session, access, broker, registry = loop_context
+    for index in range(3):
+        repo.append_message(session.id, MessageRole.USER, f"old question {index}")
+        repo.append_message(session.id, MessageRole.ASSISTANT, f"old answer {index}")
+    provider = SequenceProvider(
+        [
+            ProviderError("maximum context length exceeded"),
+            [TextDelta("recovered"), AssistantTurn("recovered", (), "stop")],
+        ]
+    )
+    loop = AgentLoop(
+        repo,
+        PromptComposer(),
+        provider,
+        broker,
+        registry,
+        context_limit=None,
+    )
+    events = [
+        event
+        async for event in loop.send_message(
+            session.id, "new question", model_id="model-a", thinking_strength=None, access=access
+        )
+    ]
+    assert len(provider.requests) == 2
+    first_contents = str(provider.requests[0]["messages"])
+    second_contents = str(provider.requests[1]["messages"])
+    assert "old question 0" in first_contents
+    assert "old question 0" not in second_contents
+    assert "new question" in second_contents
+    assert events[-1].type == "turn_finished"
+    assert repo.list_messages(session.id)[-1].content == "recovered"
+
+
+@pytest.mark.asyncio
+async def test_non_context_provider_error_is_not_retried(loop_context):
+    _, repo, session, access, broker, registry = loop_context
+    provider = SequenceProvider([ProviderError("502 Bad Gateway")])
+    loop = AgentLoop(
+        repo,
+        PromptComposer(),
+        provider,
+        broker,
+        registry,
+        context_limit=100,
+    )
+    events = [
+        event
+        async for event in loop.send_message(
+            session.id, "hi", model_id="model-a", thinking_strength=None, access=access
+        )
+    ]
+    assert len(provider.requests) == 1
+    assert events[-1].type == "turn_stopped"
+
+
+@pytest.mark.asyncio
+async def test_retryable_provider_error_succeeds_on_fifth_attempt(loop_context):
+    _, repo, session, access, broker, registry = loop_context
+    provider = SequenceProvider(
+        [
+            ProviderError("temporary connection failure", retryable=True),
+            ProviderError("temporary connection failure", retryable=True),
+            ProviderError("temporary connection failure", retryable=True),
+            ProviderError("temporary connection failure", retryable=True),
+            [TextDelta("recovered"), AssistantTurn("recovered", (), "stop")],
+        ]
+    )
+    loop = AgentLoop(
+        repo,
+        PromptComposer(),
+        provider,
+        broker,
+        registry,
+        retry_delays=(0, 0, 0, 0),
+    )
+    events = [
+        event
+        async for event in loop.send_message(
+            session.id, "hi", model_id="model-a", thinking_strength=None, access=access
+        )
+    ]
+    retry_events = [event for event in events if event.type == "retrying"]
+    assert len(provider.requests) == 5
+    assert [event.data["attempt"] for event in retry_events] == [2, 3, 4, 5]
+    assert [event.data["retry_count"] for event in retry_events] == [1, 2, 3, 4]
+    assert events[-1].type == "turn_finished"
+    assert repo.list_messages(session.id)[-1].content == "recovered"
+
+
+@pytest.mark.asyncio
+async def test_retryable_provider_error_stops_after_five_attempts(loop_context):
+    _, repo, session, access, broker, registry = loop_context
+    provider = SequenceProvider(
+        [ProviderError("temporary connection failure", retryable=True) for _ in range(5)]
+    )
+    loop = AgentLoop(
+        repo,
+        PromptComposer(),
+        provider,
+        broker,
+        registry,
+        retry_delays=(0, 0, 0, 0),
+    )
+    events = [
+        event
+        async for event in loop.send_message(
+            session.id, "hi", model_id="model-a", thinking_strength=None, access=access
+        )
+    ]
+    assert len(provider.requests) == 5
+    assert len([event for event in events if event.type == "retrying"]) == 4
+    assert events[-1].type == "turn_stopped"
+    assert "temporary connection failure" in repo.list_messages(session.id)[-1].content
+
+
+@pytest.mark.asyncio
+async def test_stop_interrupts_retry_backoff(loop_context):
+    _, repo, session, access, broker, registry = loop_context
+    provider = SequenceProvider([ProviderError("connection reset", retryable=True)])
+    stop = asyncio.Event()
+    loop = AgentLoop(
+        repo,
+        PromptComposer(),
+        provider,
+        broker,
+        registry,
+        retry_delays=(30, 30, 30, 30),
+    )
+
+    async def collect():
+        return [
+            event
+            async for event in loop.send_message(
+                session.id,
+                "hi",
+                model_id="model-a",
+                thinking_strength=None,
+                access=access,
+                stop_event=stop,
+            )
+        ]
+
+    task = asyncio.create_task(collect())
+    await asyncio.sleep(0.05)
+    stop.set()
+    events = await asyncio.wait_for(task, timeout=2)
+    assert len(provider.requests) == 1
+    assert events[-1].type == "turn_stopped"
+
+
+@pytest.mark.asyncio
 async def test_none_mode_exposes_only_read_tools(loop_context):
     _, repo, session, access, broker, registry = loop_context
     provider = SequenceProvider([[AssistantTurn("done", (), "stop")]])

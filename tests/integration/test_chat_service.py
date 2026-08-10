@@ -5,9 +5,10 @@ from datetime import UTC, datetime
 import pytest
 from PySide6.QtCore import QObject, Signal
 
+from desktop_agent.agent.loop import AgentLoop
 from desktop_agent.chat_service import ChatService, MessageListModel
 from desktop_agent.domain.models import MessageRole, MessageStatus, ProviderConfig, ToolRunStatus
-from desktop_agent.providers.openai_compatible import AssistantTurn, TextDelta
+from desktop_agent.providers.openai_compatible import AssistantTurn, ProviderError, TextDelta
 from desktop_agent.security.permissions import PermissionBroker, PermissionRequest
 from desktop_agent.storage.database import Database
 from desktop_agent.storage.repositories import Repository
@@ -73,6 +74,20 @@ class DelayedTitleProvider(Provider):
         yield AssistantTurn(title, (), "stop")
 
 
+class DelayedMainProvider(Provider):
+    def __init__(self):
+        super().__init__()
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def stream_chat(self, **request):
+        self.requests.append(request)
+        self.started.set()
+        await self.release.wait()
+        yield TextDelta("hello")
+        yield AssistantTurn("hello", (), "stop")
+
+
 class FailingTitleProvider(Provider):
     async def stream_chat(self, **request):
         self.requests.append(request)
@@ -90,10 +105,21 @@ async def test_chat_service_runs_real_loop_and_safe_mode_hides_tools(tmp_path):
     now = datetime.now(UTC)
     repo.set_provider_config(
         ProviderConfig(
-            "openai", "OpenAI", "https://example.test/v1", {"models": ["model-a"]}, now, now
+            "openai",
+            "OpenAI",
+            "https://example.test/v1",
+            {"models": ["model-a"], "timeout": 37},
+            now,
+            now,
         )
     )
     provider = Provider()
+    timeouts = []
+
+    def provider_factory(base_url, api_key, *, timeout):
+        timeouts.append(timeout)
+        return provider
+
     service = ChatService(
         repo,
         Sessions(session.id),
@@ -102,7 +128,7 @@ async def test_chat_service_runs_real_loop_and_safe_mode_hides_tools(tmp_path):
         PermissionBroker(),
         Credentials(),
         safe_mode=True,
-        provider_factory=lambda base_url, api_key: provider,
+        provider_factory=provider_factory,
     )
     service.sendMessage("hi")
     while service.running:
@@ -112,6 +138,7 @@ async def test_chat_service_runs_real_loop_and_safe_mode_hides_tools(tmp_path):
     assert messages[-1].content == "hello"
     assert provider.requests[0]["tools"] == ()
     assert provider.closed is True
+    assert timeouts == [37]
     database.close()
 
 
@@ -181,6 +208,53 @@ async def test_send_returns_immediately_and_streaming_does_not_reload_per_delta(
 
 
 @pytest.mark.asyncio
+async def test_chat_service_exposes_retry_count_until_stream_recovers(tmp_path, monkeypatch):
+    database = Database(tmp_path / "agent.sqlite3")
+    repo = Repository(database)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    session = repo.create_session("Draft", str(workspace), current_model_id="openai:model-a")
+    now = datetime.now(UTC)
+    repo.set_provider_config(
+        ProviderConfig(
+            "openai", "OpenAI", "https://example.test/v1", {"models": ["model-a"]}, now, now
+        )
+    )
+
+    class RetryOnceProvider(Provider):
+        async def stream_chat(self, **request):
+            self.requests.append(request)
+            if len(self.requests) == 1:
+                raise ProviderError("connection reset", retryable=True)
+            yield TextDelta("recovered")
+            yield AssistantTurn("recovered", (), "stop")
+
+    monkeypatch.setattr(AgentLoop, "DEFAULT_RETRY_DELAYS", (0, 0, 0, 0))
+    provider = RetryOnceProvider()
+    service = ChatService(
+        repo,
+        Sessions(session.id),
+        None,
+        Settings(),
+        PermissionBroker(),
+        Credentials(),
+        safe_mode=True,
+        provider_factory=lambda base_url, api_key: provider,
+    )
+    statuses = []
+    service.retryStatusChanged.connect(lambda: statuses.append(service.retryStatus))
+    service.sendMessage("hi")
+    while service.running:
+        await asyncio.sleep(0.01)
+
+    assert len(provider.requests) == 2
+    assert "连接失败，已重试 1 次，正在进行第 2/5 次尝试" in statuses
+    assert service.retryStatus == ""
+    assert repo.list_messages(session.id)[-1].content == "recovered"
+    database.close()
+
+
+@pytest.mark.asyncio
 async def test_first_message_generates_title_without_blocking_main_response(tmp_path):
     database = Database(tmp_path / "agent.sqlite3")
     repo = Repository(database)
@@ -195,7 +269,7 @@ async def test_first_message_generates_title_without_blocking_main_response(tmp_
             "openai", "OpenAI", "https://example.test/v1", {"models": ["model-a"]}, now, now
         )
     )
-    main_provider = Provider()
+    main_provider = DelayedMainProvider()
     title_provider = DelayedTitleProvider()
     service = ChatService(
         repo,
@@ -212,9 +286,14 @@ async def test_first_message_generates_title_without_blocking_main_response(tmp_
     service.sessionTitleChanged.connect(changed.append)
 
     service.sendMessage("设计一个简单的桌面 Agent")
-    await title_provider.started.wait()
+    await main_provider.started.wait()
+    await asyncio.sleep(0)
+    assert title_provider.started.is_set() is False
+
+    main_provider.release.set()
     while service.running:
         await asyncio.sleep(0.01)
+    await title_provider.started.wait()
 
     assert repo.get_session(session.id).title == "新对话"
     assert service._title_tasks
@@ -230,6 +309,54 @@ async def test_first_message_generates_title_without_blocking_main_response(tmp_
     while service.running:
         await asyncio.sleep(0.01)
     assert len(title_provider.requests) == 1
+    database.close()
+
+
+@pytest.mark.asyncio
+async def test_default_provider_uses_shared_client_without_closing_after_turn(tmp_path):
+    database = Database(tmp_path / "agent.sqlite3")
+    repo = Repository(database)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    session = repo.create_session("Draft", str(workspace), current_model_id="openai:model-a")
+    now = datetime.now(UTC)
+    config = ProviderConfig(
+        "openai", "OpenAI", "https://example.test/v1", {"models": ["model-a"]}, now, now
+    )
+    repo.set_provider_config(config)
+    provider = Provider()
+
+    class PooledModels:
+        def __init__(self):
+            self.requests = []
+            self.close_count = 0
+
+        async def clientFor(self, provider_id, provider_config):
+            self.requests.append((provider_id, provider_config))
+            return provider
+
+        def closeClients(self):
+            self.close_count += 1
+
+    models = PooledModels()
+    service = ChatService(
+        repo,
+        Sessions(session.id),
+        models,
+        Settings(),
+        PermissionBroker(),
+        Credentials(),
+        safe_mode=True,
+    )
+
+    service.sendMessage("hi")
+    while service.running:
+        await asyncio.sleep(0.01)
+
+    assert models.requests == [("openai", config)]
+    assert provider.closed is False
+    service.shutdown()
+    assert models.close_count == 1
     database.close()
 
 

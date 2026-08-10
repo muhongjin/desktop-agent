@@ -243,6 +243,7 @@ ApplicationWindow {
                 Layout.fillHeight: true
                 hasSession: sessionService.hasCurrentSession
                 running: chatService.running
+                retryStatus: chatService.retryStatus
                 model: chatService.messageModel
             }
 

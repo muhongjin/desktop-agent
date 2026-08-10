@@ -40,7 +40,9 @@ def test_keyring_adapter_uses_service_and_provider_ids(monkeypatch):
     )
     store = KeyringCredentialStore("TestAgent")
     assert store.get("openai") == "stored"
+    assert store.get("openai") == "stored"
     store.set("openai", "secret")
+    assert store.get("openai") == "secret"
     store.delete("openai")
     assert calls == [
         ("get", "TestAgent", "openai"),

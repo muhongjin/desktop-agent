@@ -150,25 +150,129 @@ ListView {
     Menu {
         id: contextMenu
         objectName: "sessionContextMenu"
+        width: 188
+        topPadding: UI.Theme.space8
+        bottomPadding: UI.Theme.space8
+        leftPadding: UI.Theme.space8
+        rightPadding: UI.Theme.space8
+
+        background: Rectangle {
+            objectName: "sessionContextMenuBackground"
+            radius: UI.Theme.radiusLarge
+            color: UI.Theme.surface
+            border.color: UI.Theme.border
+            border.width: 1
+        }
 
         MenuItem {
+            id: renameMenuItem
             objectName: "renameSessionMenuItem"
+            width: contextMenu.availableWidth
+            height: UI.Theme.controlHeightLarge
             text: qsTr("重命名")
+            hoverEnabled: true
+            font.family: UI.Theme.fontFamily
+            font.pixelSize: UI.Theme.fontBody
             onTriggered: root.openRenameDialog()
+
+            contentItem: Label {
+                text: renameMenuItem.text
+                color: UI.Theme.textPrimary
+                font: renameMenuItem.font
+                verticalAlignment: Text.AlignVCenter
+                leftPadding: UI.Theme.space8
+                rightPadding: UI.Theme.space8
+            }
+
+            background: Rectangle {
+                radius: UI.Theme.radiusMedium
+                color: renameMenuItem.down ? UI.Theme.surfacePressed
+                        : renameMenuItem.highlighted || renameMenuItem.hovered
+                          ? UI.Theme.surfaceHover : "transparent"
+                border.width: renameMenuItem.visualFocus ? UI.Theme.focusWidth : 0
+                border.color: UI.Theme.focus
+            }
         }
 
         MenuItem {
+            id: workspaceMenuItem
             objectName: "openWorkspaceMenuItem"
+            width: contextMenu.availableWidth
+            height: UI.Theme.controlHeightLarge
             text: qsTr("打开工作区")
+            hoverEnabled: true
+            font.family: UI.Theme.fontFamily
+            font.pixelSize: UI.Theme.fontBody
             onTriggered: root.workspaceRequested(root.contextSessionId)
+
+            contentItem: Label {
+                text: workspaceMenuItem.text
+                color: UI.Theme.textPrimary
+                font: workspaceMenuItem.font
+                verticalAlignment: Text.AlignVCenter
+                leftPadding: UI.Theme.space8
+                rightPadding: UI.Theme.space8
+            }
+
+            background: Rectangle {
+                radius: UI.Theme.radiusMedium
+                color: workspaceMenuItem.down ? UI.Theme.surfacePressed
+                        : workspaceMenuItem.highlighted || workspaceMenuItem.hovered
+                          ? UI.Theme.surfaceHover : "transparent"
+                border.width: workspaceMenuItem.visualFocus ? UI.Theme.focusWidth : 0
+                border.color: UI.Theme.focus
+            }
         }
 
-        MenuSeparator {}
+        MenuSeparator {
+            width: contextMenu.availableWidth
+            height: UI.Theme.space12
+            topPadding: 0
+            bottomPadding: 0
+
+            contentItem: Item {
+                Rectangle {
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.leftMargin: UI.Theme.space8
+                    anchors.rightMargin: UI.Theme.space8
+                    anchors.verticalCenter: parent.verticalCenter
+                    height: 1
+                    color: UI.Theme.border
+                }
+            }
+
+            background: Item {}
+        }
 
         MenuItem {
+            id: archiveMenuItem
             objectName: "archiveSessionMenuItem"
+            width: contextMenu.availableWidth
+            height: UI.Theme.controlHeightLarge
             text: qsTr("归档")
+            hoverEnabled: true
+            font.family: UI.Theme.fontFamily
+            font.pixelSize: UI.Theme.fontBody
             onTriggered: root.archiveRequested(root.contextSessionId)
+
+            contentItem: Label {
+                text: archiveMenuItem.text
+                color: UI.Theme.textPrimary
+                font: archiveMenuItem.font
+                verticalAlignment: Text.AlignVCenter
+                leftPadding: UI.Theme.space8
+                rightPadding: UI.Theme.space8
+            }
+
+            background: Rectangle {
+                radius: UI.Theme.radiusMedium
+                color: archiveMenuItem.down ? UI.Theme.surfacePressed
+                        : archiveMenuItem.highlighted || archiveMenuItem.hovered
+                          ? UI.Theme.surfaceHover : "transparent"
+                border.width: archiveMenuItem.visualFocus ? UI.Theme.focusWidth : 0
+                border.color: UI.Theme.focus
+            }
         }
     }
 

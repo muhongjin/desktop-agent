@@ -32,7 +32,7 @@ uv run ruff check .
 
 API Key 只保存到 Windows Credential Manager，不写入 SQLite。配置云模型后，对话内容会发送到对应模型服务；账户、会话和文件数据仍保存在本机。MVP 没有登录、账户、云同步、导入或导出功能。
 
-应用不设置固定默认模型。新会话继承最近一次选择的模型、思考强度和执行模式；会话中切换只影响之后发送的消息，每条消息保留实际使用的模型快照。
+应用不设置固定默认模型。新会话继承最近一次选择的模型和思考强度，执行模式固定从 `local` 开始；会话中切换只影响之后发送的消息，每条消息保留实际使用的模型快照。
 
 ## 权限与工作区
 
@@ -42,11 +42,11 @@ API Key 只保存到 Windows Credential Manager，不写入 SQLite。配置云�
 %LOCALAPPDATA%/DesktopAgent/workspaces/<session-id>/
 ```
 
-输入栏可以选择 `none` 或 `local`，并可为当前会话临时开启完全访问：
+输入栏可以选择 `none`、`local` 或 `all`：
 
 - `none`：仅允许读取自动工作区和关联目录，禁用写入与命令执行。
 - `local`：允许可信目录内读写和普通命令，高风险操作需要确认。
-- 完全访问：解除路径限制，但提权、系统修改和高风险删除仍需确认；关闭应用或归档会话后失效。
+- `all`：解除路径限制，但提权、系统修改和高风险删除仍需确认；关闭应用或归档会话后失效。
 
 PowerShell 自动优先使用 `pwsh.exe`，不存在时回退到 `powershell.exe`。也可以在设置中显式选择 Windows PowerShell 5.1 或 PowerShell 7+。应用不修改系统执行策略。
 
@@ -56,12 +56,31 @@ SQLite 数据库和自动工作区位于 `platformdirs.user_data_dir("DesktopAge
 
 活跃会话不能直接删除，只能先归档。已归档聊天可以恢复或删除；删除时自动工作区会进入系统回收站，随后删除会话记录。关联的外部目录永远不会随会话删除，应用也不提供清空系统回收站的操作。
 
-应用异常退出后不会自动重试模型请求、重放文件操作或重新执行命令。已生成的部分回复会原样保留。
+模型连接因网络、限流或服务端临时故障失败时，单次回复最多总尝试五次。应用异常退出后不会重放文件操作或重新执行命令，已生成的内容和完整会话历史会保留。
 
 ## 打包
 
+正式发行需要 Python 3.12、`uv` 和 Inno Setup 6。先安装开发依赖，再执行统一构建脚本：
+
 ```powershell
-uv run pyinstaller installer/desktop-agent.spec --noconfirm
+uv sync
+pwsh -File installer/build-release.ps1
 ```
 
-生成的无控制台 Windows 程序位于 `dist/DesktopAgent/DesktopAgent.exe`。目录发行避免每次启动解压整个运行时，启动速度更快；请连同整个 `DesktopAgent` 目录一起分发。
+Windows PowerShell 5.1 使用相同脚本：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File installer\build-release.ps1
+```
+
+如果 Inno Setup 不在默认目录，通过 `-InnoSetupCompiler` 传入 `ISCC.exe` 的完整路径。只构建便携目录时可以添加 `-PortableOnly`。
+
+发行文件统一写入：
+
+```text
+artifacts/
+├─ DesktopAgent-0.1.0-win64/
+└─ DesktopAgent-Setup-0.1.0.exe
+```
+
+安装包采用每用户安装，默认目录为 `%LOCALAPPDATA%\Programs\Desktop Agent`，无需管理员权限。卸载器会删除程序文件和快捷方式，但保留 `%LOCALAPPDATA%\DesktopAgent` 中的会话、工作区和设置。便携目录避免每次启动解压整个运行时，分发时必须保留其完整目录结构。

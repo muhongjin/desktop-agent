@@ -263,6 +263,7 @@ async def test_provider_error_redacts_key():
             async for _ in client.stream_chat(model_id="model-a", messages=[]):
                 pass
     assert secret not in str(captured.value)
+    assert secret not in (captured.value.response_body or "")
 
 
 @pytest.mark.asyncio
@@ -297,6 +298,8 @@ async def test_http_status_sets_retryable_classification(status, retryable):
             async for _ in client.stream_chat(model_id="model-a", messages=[]):
                 pass
     assert captured.value.retryable is retryable
+    assert captured.value.status_code == status
+    assert "failed" in (captured.value.response_body or "")
 
 
 @pytest.mark.asyncio

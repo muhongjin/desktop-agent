@@ -37,6 +37,7 @@ SolidCompression=yes
 WizardStyle=modern
 CloseApplications=yes
 RestartApplications=no
+UsePreviousTasks=no
 Uninstallable=yes
 UninstallDisplayName={#AppName} {#AppVersion}
 UninstallDisplayIcon={app}\{#AppExeName}
@@ -47,7 +48,7 @@ Name: "chinesesimplified"; MessagesFile: "{#InstallerDir}\languages\ChineseSimpl
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
-Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: "附加快捷方式："; Flags: unchecked
+Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: "附加快捷方式："
 
 [Files]
 Source: "*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
@@ -56,5 +57,32 @@ Source: "*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubd
 Name: "{autoprograms}\Desktop Agent"; Filename: "{app}\{#AppExeName}"
 Name: "{autodesktop}\Desktop Agent"; Filename: "{app}\{#AppExeName}"; Tasks: desktopicon
 
-[Run]
-Filename: "{app}\{#AppExeName}"; Description: "启动 Desktop Agent"; Flags: nowait postinstall skipifsilent
+[CustomMessages]
+chinesesimplified.LaunchApp=启动 Desktop Agent
+english.LaunchApp=Launch Desktop Agent
+
+[Code]
+var
+  LaunchCheckBox: TNewCheckBox;
+
+procedure InitializeWizard;
+begin
+  LaunchCheckBox := TNewCheckBox.Create(WizardForm.FinishedPage);
+  LaunchCheckBox.Parent := WizardForm.FinishedPage;
+  LaunchCheckBox.Left := WizardForm.RunList.Left;
+  LaunchCheckBox.Top := WizardForm.RunList.Top;
+  LaunchCheckBox.Width := WizardForm.RunList.Width;
+  LaunchCheckBox.Height := ScaleY(20);
+  LaunchCheckBox.Caption := CustomMessage('LaunchApp');
+  LaunchCheckBox.Checked := True;
+end;
+
+function NextButtonClick(CurPageID: Integer): Boolean;
+var
+  ResultCode: Integer;
+begin
+  Result := True;
+  if (CurPageID = wpFinished) and LaunchCheckBox.Checked then
+    Exec(ExpandConstant('{app}\{#AppExeName}'), '', '', SW_SHOWNORMAL,
+      ewNoWait, ResultCode);
+end;

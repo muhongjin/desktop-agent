@@ -83,19 +83,50 @@ class MessageListModel(QAbstractListModel):
         return None
 
     def load(self, session_id: str) -> None:
-        self.beginResetModel()
-        self.session_id = session_id
-        self.messages = self.repository.list_messages(session_id) if session_id else []
-        self.details = {}
-        self.tool_runs = {}
+        messages = self.repository.list_messages(session_id) if session_id else []
+        details = {}
+        tool_runs = {}
         if session_id:
             runs = iter(self.repository.list_tool_runs(session_id))
-            for message in self.messages:
+            for message in messages:
                 if message.role is MessageRole.TOOL:
                     run = next(runs, None)
                     if run is not None:
-                        self.details[message.id] = run.raw_output
-                        self.tool_runs[message.id] = run
+                        details[message.id] = run.raw_output
+                        tool_runs[message.id] = run
+        if session_id == self.session_id and [item.id for item in messages] == [
+            item.id for item in self.messages
+        ]:
+            previous_details = self.details
+            previous_tool_runs = self.tool_runs
+            self.details = details
+            self.tool_runs = tool_runs
+            for row, (previous, current) in enumerate(zip(self.messages, messages)):
+                roles = []
+                if previous.content != current.content:
+                    roles.append(self.ContentRole)
+                if previous.status != current.status:
+                    roles.append(self.StatusRole)
+                if previous.completion_marker != current.completion_marker:
+                    roles.append(self.CompletionMarkerRole)
+                if previous_details.get(current.id, "") != details.get(current.id, ""):
+                    roles.append(self.DetailsRole)
+                previous_run = previous_tool_runs.get(current.id)
+                current_run = tool_runs.get(current.id)
+                if previous_run != current_run:
+                    roles.extend(
+                        [self.ToolNameRole, self.ToolStatusRole, self.ToolInputRole]
+                    )
+                self.messages[row] = current
+                if roles:
+                    index = self.index(row, 0)
+                    self.dataChanged.emit(index, index, roles)
+            return
+        self.beginResetModel()
+        self.session_id = session_id
+        self.messages = messages
+        self.details = details
+        self.tool_runs = tool_runs
         self.endResetModel()
 
     def update_message_content(self, message_id: str, content: str) -> None:
@@ -373,14 +404,15 @@ class ChatService(QObject):
                             event.data["message_id"], event.data.get("content", "")
                         )
                     elif event.type == "retrying":
-                        self.messages.update_message_content(event.data["message_id"], "")
                         self._set_retry_status(
-                            "连接失败，已重试 "
-                            f"{event.data['retry_count']} 次，正在进行第 "
-                            f"{event.data['attempt']}/{event.data['max_attempts']} 次尝试"
+                            f"正在重新连接 {event.data['attempt']}/"
+                            f"{event.data['max_attempts']}"
                         )
                     elif event.type == "tool_finished":
+                        self._set_retry_status("")
                         self.messages.load(session.id)
+                    elif event.type in {"tool_started", "turn_finished", "turn_stopped"}:
+                        self._set_retry_status("")
             completed = True
         finally:
             if shell is not None:

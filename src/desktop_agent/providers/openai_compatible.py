@@ -1,5 +1,5 @@
 import json
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass
 from typing import Any
@@ -15,10 +15,14 @@ class ProviderError(Exception):
         *,
         retryable: bool = False,
         status_code: int | None = None,
+        response_headers: Mapping[str, str] | None = None,
+        response_body: str | None = None,
     ):
         super().__init__(message)
         self.retryable = retryable
         self.status_code = status_code
+        self.response_headers = dict(response_headers or {})
+        self.response_body = response_body
 
 
 class ModelDiscoveryError(ProviderError):
@@ -142,6 +146,8 @@ class OpenAICompatibleClient:
                 self._safe_error("Provider request failed", error),
                 retryable=self._retryable_status(status_code),
                 status_code=status_code,
+                response_headers=dict(error.response.headers),
+                response_body=self._safe_response_body(error.response),
             ) from error
         except httpx.HTTPError as error:
             raise ProviderError(
@@ -402,6 +408,14 @@ class OpenAICompatibleClient:
         if self.api_key:
             detail = detail.replace(self.api_key, "[redacted]")
         return f"{prefix}: {detail}"
+
+    def _safe_response_body(self, response: httpx.Response) -> str | None:
+        with suppress(httpx.HTTPError, UnicodeError):
+            body = response.text.strip()
+            if self.api_key:
+                body = body.replace(self.api_key, "[redacted]")
+            return body[:1200] or None
+        return None
 
     @staticmethod
     def _retryable_status(status_code: int) -> bool:

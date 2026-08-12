@@ -35,7 +35,6 @@ class PromptComposer:
         tools: list[dict[str, Any]] | tuple[dict[str, Any], ...] = (),
         context_limit: int | None = None,
         truncate: bool = False,
-        force_truncate: bool = False,
     ) -> PromptRequest:
         kernel = (
             files("desktop_agent.resources")
@@ -68,7 +67,6 @@ class PromptComposer:
                 workspace_message,
                 tools,
                 budget,
-                force_truncate=force_truncate,
             )
             messages.extend(history_payload)
             messages.append(workspace_message)
@@ -114,8 +112,6 @@ class PromptComposer:
         workspace_message: dict[str, Any],
         tools: list[dict[str, Any]] | tuple[dict[str, Any], ...],
         budget: int,
-        *,
-        force_truncate: bool,
     ) -> tuple[list[dict[str, Any]], bool]:
         selected = list(groups)
         was_truncated = False
@@ -123,9 +119,6 @@ class PromptComposer:
         def payload() -> list[dict[str, Any]]:
             return [self._message_payload(message) for group in selected for message in group]
 
-        if force_truncate and len(selected) > 1:
-            selected.pop(0)
-            was_truncated = True
         while selected and self.estimate_tokens(prefix + payload() + [workspace_message], tools) > budget:
             if len(selected) == 1:
                 break

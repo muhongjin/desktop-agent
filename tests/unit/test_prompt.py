@@ -69,26 +69,6 @@ def test_prompt_truncation_removes_complete_old_turns(tmp_path):
     assert "answer-2" in contents
 
 
-def test_forced_prompt_truncation_drops_oldest_turn_even_when_estimate_is_low(tmp_path):
-    database = Database(tmp_path / "agent.sqlite3")
-    repo = Repository(database)
-    session = repo.create_session("Draft", str(tmp_path / "workspace"))
-    repo.append_message(session.id, MessageRole.USER, "old " + ("x" * 1000))
-    repo.append_message(session.id, MessageRole.USER, "latest")
-    request = PromptComposer().compose(
-        repo.list_messages(session.id),
-        workspace=session.workspace_path,
-        context_limit=1_000_000,
-        truncate=True,
-        force_truncate=True,
-    )
-    database.close()
-    contents = str(request.messages)
-    assert request.truncated is True
-    assert "old " not in contents
-    assert "latest" in contents
-
-
 def test_prompt_truncation_handles_mixed_turns_and_tool_history(tmp_path):
     database = Database(tmp_path / "agent.sqlite3")
     repo = Repository(database)

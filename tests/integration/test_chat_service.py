@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 import pytest
 from PySide6.QtCore import QObject, Signal
 
-from desktop_agent.agent.loop import AgentLoop
+from desktop_agent.agent.session_retry import SessionRetry
 from desktop_agent.chat_service import ChatService, MessageListModel
 from desktop_agent.domain.models import MessageRole, MessageStatus, ProviderConfig, ToolRunStatus
 from desktop_agent.providers.openai_compatible import AssistantTurn, ProviderError, TextDelta
@@ -229,7 +229,7 @@ async def test_chat_service_exposes_retry_count_until_stream_recovers(tmp_path, 
             yield TextDelta("recovered")
             yield AssistantTurn("recovered", (), "stop")
 
-    monkeypatch.setattr(AgentLoop, "DEFAULT_RETRY_DELAYS", (0, 0, 0, 0))
+    monkeypatch.setattr(SessionRetry, "delay", lambda self, retry_count, error: 0)
     provider = RetryOnceProvider()
     service = ChatService(
         repo,
@@ -248,7 +248,7 @@ async def test_chat_service_exposes_retry_count_until_stream_recovers(tmp_path, 
         await asyncio.sleep(0.01)
 
     assert len(provider.requests) == 2
-    assert "连接失败，已重试 1 次，正在进行第 2/5 次尝试" in statuses
+    assert "正在重新连接 2/5" in statuses
     assert service.retryStatus == ""
     assert repo.list_messages(session.id)[-1].content == "recovered"
     database.close()

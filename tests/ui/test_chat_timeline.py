@@ -4,7 +4,7 @@ import pytest
 from PySide6.QtCore import QObject, Qt, QUrl
 from PySide6.QtQml import QQmlComponent, QQmlEngine, QQmlExpression
 from PySide6.QtQuick import QQuickView
-from PySide6.QtTest import QTest
+from PySide6.QtTest import QSignalSpy, QTest
 
 from desktop_agent.chat_service import MessageListModel
 from desktop_agent.domain.models import MessageRole, MessageStatus
@@ -148,16 +148,53 @@ def test_pending_assistant_shows_thinking_until_first_token(qapp, tmp_path):
     assert activity_label is not None
     assert indicator.property("visible") is True
 
-    chat.setProperty("retryStatus", "连接失败，已重试 1 次，正在进行第 2/5 次尝试")
+    chat.setProperty("retryStatus", "正在重新连接 2/5")
     qapp.processEvents()
-    assert activity_label.property("text") == "连接失败，已重试 1 次，正在进行第 2/5 次尝试"
+    assert activity_label.property("text") == "正在重新连接 2/5"
 
     model.update_message_content(draft.id, "首个 token")
+    qapp.processEvents()
+    assert indicator.property("visible") is True
+
+    chat.setProperty("retryStatus", "")
     qapp.processEvents()
     assert indicator.property("visible") is False
 
     view.close()
     view.deleteLater()
+    database.close()
+
+
+def test_same_session_completion_refresh_does_not_reset_timeline(qapp, tmp_path):
+    database = Database(tmp_path / "agent.sqlite3")
+    repository = Repository(database)
+    session = repository.create_session("Draft", str(tmp_path / "workspace"))
+    repository.append_message(session.id, MessageRole.USER, "hello")
+    draft = repository.append_message(
+        session.id,
+        MessageRole.ASSISTANT,
+        "response",
+        status=MessageStatus.STOPPED,
+        completion_marker=False,
+    )
+    model = MessageListModel(repository)
+    model.load(session.id)
+    reset_spy = QSignalSpy(model.modelReset)
+    changed_spy = QSignalSpy(model.dataChanged)
+
+    repository.update_message(
+        draft.id,
+        "response",
+        MessageStatus.COMPLETE,
+        completion_marker=True,
+    )
+    model.load(session.id)
+
+    assistant_index = model.index(1, 0)
+    assert reset_spy.count() == 0
+    assert changed_spy.count() == 1
+    assert model.data(assistant_index, model.StatusRole) == MessageStatus.COMPLETE.value
+    assert model.data(assistant_index, model.CompletionMarkerRole) is True
     database.close()
 
 

@@ -4,6 +4,7 @@ import pytest
 
 from desktop_agent.agent.loop import AgentLoop
 from desktop_agent.agent.prompt import PromptComposer
+from desktop_agent.agent.session_retry import SessionRetry
 from desktop_agent.domain.models import MessageRole, MessageStatus, ToolRunStatus
 from desktop_agent.providers.openai_compatible import (
     AssistantTurn,
@@ -15,7 +16,7 @@ from desktop_agent.security.permissions import PermissionBroker, SessionAccess
 from desktop_agent.storage.database import Database
 from desktop_agent.storage.repositories import Repository
 from desktop_agent.tools.files import FileTools
-from desktop_agent.tools.registry import file_tool_registry
+from desktop_agent.tools.registry import RegisteredTool, file_tool_registry
 
 
 class SequenceProvider:
@@ -30,6 +31,16 @@ class SequenceProvider:
             raise turn
         for event in turn:
             yield event
+
+
+class RecordingPromptComposer(PromptComposer):
+    def __init__(self):
+        super().__init__()
+        self.truncate_values = []
+
+    def compose(self, *args, **kwargs):
+        self.truncate_values.append(kwargs.get("truncate", False))
+        return super().compose(*args, **kwargs)
 
 
 @pytest.fixture
@@ -80,7 +91,15 @@ async def test_tool_call_passes_permission_and_persists_context(loop_context):
             [TextDelta("done"), AssistantTurn("done", (), "stop")],
         ]
     )
-    loop = AgentLoop(repo, PromptComposer(), provider, broker, registry)
+    composer = RecordingPromptComposer()
+    loop = AgentLoop(
+        repo,
+        composer,
+        provider,
+        broker,
+        registry,
+        context_limit=128_000,
+    )
     events = [
         event
         async for event in loop.send_message(
@@ -101,6 +120,7 @@ async def test_tool_call_passes_permission_and_persists_context(loop_context):
     )
     assert tool_message.tool_call_id == "call-1"
     assert repo.list_tool_runs(session.id)[0].status is ToolRunStatus.COMPLETED
+    assert composer.truncate_values == [True, False]
     followup = provider.requests[1]["messages"]
     assistant_call = next(message for message in followup if message.get("tool_calls"))
     tool_result = next(message for message in followup if message["role"] == "tool")
@@ -163,17 +183,12 @@ async def test_provider_error_is_visible_and_not_retried(loop_context):
 
 
 @pytest.mark.asyncio
-async def test_context_error_retries_once_with_truncated_history(loop_context):
+async def test_context_error_is_not_retried(loop_context):
     _, repo, session, access, broker, registry = loop_context
     for index in range(3):
         repo.append_message(session.id, MessageRole.USER, f"old question {index}")
         repo.append_message(session.id, MessageRole.ASSISTANT, f"old answer {index}")
-    provider = SequenceProvider(
-        [
-            ProviderError("maximum context length exceeded"),
-            [TextDelta("recovered"), AssistantTurn("recovered", (), "stop")],
-        ]
-    )
+    provider = SequenceProvider([ProviderError("maximum context length exceeded")])
     loop = AgentLoop(
         repo,
         PromptComposer(),
@@ -188,20 +203,16 @@ async def test_context_error_retries_once_with_truncated_history(loop_context):
             session.id, "new question", model_id="model-a", thinking_strength=None, access=access
         )
     ]
-    assert len(provider.requests) == 2
-    first_contents = str(provider.requests[0]["messages"])
-    second_contents = str(provider.requests[1]["messages"])
-    assert "old question 0" in first_contents
-    assert "old question 0" not in second_contents
-    assert "new question" in second_contents
-    assert events[-1].type == "turn_finished"
-    assert repo.list_messages(session.id)[-1].content == "recovered"
+    assert len(provider.requests) == 1
+    assert events[-1].type == "turn_stopped"
+    assert events[-1].data["context_overflow"] is True
+    assert "maximum context length exceeded" in repo.list_messages(session.id)[-1].content
 
 
 @pytest.mark.asyncio
-async def test_non_context_provider_error_is_not_retried(loop_context):
+async def test_non_retryable_provider_error_is_not_retried(loop_context):
     _, repo, session, access, broker, registry = loop_context
-    provider = SequenceProvider([ProviderError("502 Bad Gateway")])
+    provider = SequenceProvider([ProviderError("401 Unauthorized", status_code=401)])
     loop = AgentLoop(
         repo,
         PromptComposer(),
@@ -238,7 +249,7 @@ async def test_retryable_provider_error_succeeds_on_fifth_attempt(loop_context):
         provider,
         broker,
         registry,
-        retry_delays=(0, 0, 0, 0),
+        session_retry=SessionRetry(delays=(0, 0, 0, 0)),
     )
     events = [
         event
@@ -266,7 +277,7 @@ async def test_retryable_provider_error_stops_after_five_attempts(loop_context):
         provider,
         broker,
         registry,
-        retry_delays=(0, 0, 0, 0),
+        session_retry=SessionRetry(delays=(0, 0, 0, 0)),
     )
     events = [
         event
@@ -281,6 +292,76 @@ async def test_retryable_provider_error_stops_after_five_attempts(loop_context):
 
 
 @pytest.mark.asyncio
+async def test_retry_success_replaces_failed_attempt_partial(loop_context):
+    _, repo, session, access, broker, registry = loop_context
+
+    class PartialRetryProvider:
+        def __init__(self):
+            self.requests = []
+
+        async def stream_chat(self, **request):
+            self.requests.append(request)
+            if len(self.requests) == 1:
+                yield TextDelta("failed partial")
+                raise ProviderError("connection reset", retryable=True)
+            yield TextDelta("recovered")
+            yield AssistantTurn("recovered", (), "stop")
+
+    provider = PartialRetryProvider()
+    loop = AgentLoop(
+        repo,
+        PromptComposer(),
+        provider,
+        broker,
+        registry,
+        session_retry=SessionRetry(delays=(0, 0, 0, 0)),
+    )
+    events = [
+        event
+        async for event in loop.send_message(
+            session.id, "hi", model_id="model-a", thinking_strength=None, access=access
+        )
+    ]
+    contents = [event.data["content"] for event in events if event.type == "text_delta"]
+    assert contents == ["failed partial", "recovered"]
+    assert repo.list_messages(session.id)[-1].content == "recovered"
+
+
+@pytest.mark.asyncio
+async def test_retry_exhaustion_preserves_longest_partial(loop_context):
+    _, repo, session, access, broker, registry = loop_context
+
+    class PartialFailureProvider:
+        def __init__(self):
+            self.requests = []
+
+        async def stream_chat(self, **request):
+            self.requests.append(request)
+            partial = "longest partial" if len(self.requests) == 1 else "short"
+            yield TextDelta(partial)
+            raise ProviderError("connection reset", retryable=True)
+
+    provider = PartialFailureProvider()
+    loop = AgentLoop(
+        repo,
+        PromptComposer(),
+        provider,
+        broker,
+        registry,
+        session_retry=SessionRetry(delays=(0, 0, 0, 0)),
+    )
+    events = [
+        event
+        async for event in loop.send_message(
+            session.id, "hi", model_id="model-a", thinking_strength=None, access=access
+        )
+    ]
+    assert len(provider.requests) == 5
+    assert events[-1].type == "turn_stopped"
+    assert "longest partial" in repo.list_messages(session.id)[-1].content
+
+
+@pytest.mark.asyncio
 async def test_stop_interrupts_retry_backoff(loop_context):
     _, repo, session, access, broker, registry = loop_context
     provider = SequenceProvider([ProviderError("connection reset", retryable=True)])
@@ -291,7 +372,7 @@ async def test_stop_interrupts_retry_backoff(loop_context):
         provider,
         broker,
         registry,
-        retry_delays=(30, 30, 30, 30),
+        session_retry=SessionRetry(delays=(30, 30, 30, 30)),
     )
 
     async def collect():
@@ -312,6 +393,58 @@ async def test_stop_interrupts_retry_backoff(loop_context):
     stop.set()
     events = await asyncio.wait_for(task, timeout=2)
     assert len(provider.requests) == 1
+    assert events[-1].type == "turn_stopped"
+
+
+@pytest.mark.asyncio
+async def test_stop_cancels_async_tool_without_stop_parameter(loop_context):
+    _, repo, session, access, broker, _ = loop_context
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    async def slow_tool(path: str):
+        started.set()
+        try:
+            await asyncio.sleep(30)
+        finally:
+            cancelled.set()
+
+    registry = {
+        "slow_tool": RegisteredTool(
+            "slow_tool",
+            "Wait",
+            {
+                "type": "object",
+                "properties": {"path": {"type": "string"}},
+                "required": ["path"],
+            },
+            slow_tool,
+            "fs.read",
+        )
+    }
+    call = ToolCall("call-1", "slow_tool", '{"path":"."}')
+    provider = SequenceProvider([[AssistantTurn("", (call,), "tool_calls")]])
+    stop = asyncio.Event()
+    loop = AgentLoop(repo, PromptComposer(), provider, broker, registry)
+
+    async def collect():
+        return [
+            event
+            async for event in loop.send_message(
+                session.id,
+                "wait",
+                model_id="model-a",
+                thinking_strength=None,
+                access=access,
+                stop_event=stop,
+            )
+        ]
+
+    task = asyncio.create_task(collect())
+    await asyncio.wait_for(started.wait(), timeout=2)
+    stop.set()
+    events = await asyncio.wait_for(task, timeout=2)
+    assert cancelled.is_set()
     assert events[-1].type == "turn_stopped"
 
 

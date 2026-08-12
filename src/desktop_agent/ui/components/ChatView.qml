@@ -16,6 +16,7 @@ FocusScope {
     property bool pendingNewContent: false
     property int previousCount: 0
     property real previousContentY: 0
+    property bool tailFollowScheduled: false
     readonly property bool newContentAvailable: pendingNewContent && !followingTail
     readonly property int messageCount: messageRepeater.count
 
@@ -41,7 +42,11 @@ FocusScope {
     }
 
     function scheduleTailFollow() {
+        if (tailFollowScheduled)
+            return
+        tailFollowScheduled = true
         Qt.callLater(() => {
+            tailFollowScheduled = false
             if (followingTail)
                 scrollToBottom()
         })
@@ -148,8 +153,9 @@ FocusScope {
                             objectName: "thinkingIndicator"
                             visible: root.running
                                     && messageDelegate.role === "assistant"
-                                    && messageDelegate.content.length === 0
                                     && !messageDelegate.completionMarker
+                                    && (messageDelegate.content.length === 0
+                                        || root.retryStatus.length > 0)
                             spacing: Theme.space8
                             Layout.fillWidth: true
 

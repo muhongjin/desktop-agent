@@ -2,6 +2,17 @@
 
 Windows 优先的本地桌面 Agent。应用使用 PySide6/QML 构建，UI、Agent Runtime、权限策略和本地存储运行在同一进程中，不启动本地 HTTP 服务，也不需要登录。
 
+当前版本：`v0.1.1`
+
+## v0.1.1 更新
+
+- 重构 Agent 会话处理：`AgentLoop` 负责多轮循环，`SessionProcessor` 负责单次 LLM 流式请求，`SessionRetry` 负责错误分类与重试退避。
+- 网络、限流和服务端临时错误最多总尝试五次；上下文超限与不可重试错误会直接结束，并保留已经收到的部分输出。
+- Windows 应用改为单实例运行，重复启动不会创建多个独立进程窗口。
+- 精简未使用的 Qt/PySide6 模块和 QML 资源，显著减小便携版与安装包体积。
+- 使用新的应用图标，覆盖窗口标题栏、任务栏、EXE、安装程序、快捷方式和卸载项。
+- 修复流式消息完成时的界面闪烁，以及安装完成页取消“启动”后仍会启动应用的问题。
+
 ## 开发运行
 
 需要 Python 3.12 和 [uv](https://docs.astral.sh/uv/)。
@@ -79,9 +90,9 @@ powershell -ExecutionPolicy Bypass -File installer\build-release.ps1
 
 ```text
 artifacts/
-├─ DesktopAgent-0.1.0-win64/
-├─ DesktopAgent-Portable-0.1.0-win64.zip
-└─ DesktopAgent-Setup-0.1.0.exe
+├─ DesktopAgent-0.1.1-win64/
+├─ DesktopAgent-Portable-0.1.1-win64.zip
+└─ DesktopAgent-Setup-0.1.1.exe
 ```
 
 安装包采用每用户安装，默认目录为 `%LOCALAPPDATA%\Programs\Desktop Agent`，无需管理员权限。卸载器会删除程序文件和快捷方式，但保留 `%LOCALAPPDATA%\DesktopAgent` 中的会话、工作区和设置。便携目录避免每次启动解压整个运行时，分发时必须保留其完整目录结构。

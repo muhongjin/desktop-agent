@@ -5,8 +5,10 @@ import asyncio
 import ctypes
 import sys
 from collections.abc import Sequence
+from pathlib import Path
 
 import qasync
+from PySide6.QtGui import QIcon
 from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtWidgets import QApplication
 
@@ -54,6 +56,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = build_argument_parser().parse_args(argv)
     application = QApplication.instance() or QApplication(
         [sys.argv[0], *(argv if argv is not None else sys.argv[1:])]
+    )
+    application.setWindowIcon(
+        QIcon(str(Path(__file__).parent / "resources" / "app-icon.ico"))
     )
     event_loop = qasync.QEventLoop(application)
     asyncio.set_event_loop(event_loop)

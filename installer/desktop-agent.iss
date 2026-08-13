@@ -32,6 +32,7 @@ MinVersion=10.0.17763
 SourceDir={#SourceDir}
 OutputDir={#OutputDir}
 OutputBaseFilename=DesktopAgent-Setup-{#AppVersion}
+SetupIconFile={#InstallerDir}\..\src\desktop_agent\resources\app-icon.ico
 Compression=lzma2/ultra64
 SolidCompression=yes
 WizardStyle=modern

@@ -17,6 +17,7 @@ from PyInstaller.utils.hooks import copy_metadata
 project_root = Path(SPECPATH).parent
 source_root = project_root / "src"
 package_root = source_root / "desktop_agent"
+icon_path = package_root / "resources" / "app-icon.ico"
 project = tomllib.loads((project_root / "pyproject.toml").read_text(encoding="utf-8"))["project"]
 app_version = project["version"]
 version_numbers = [int(value) for value in app_version.split(".")]
@@ -183,6 +184,7 @@ executable = EXE(
     codesign_identity=None,
     entitlements_file=None,
     version=version_info,
+    icon=str(icon_path),
     exclude_binaries=True,
 )
 

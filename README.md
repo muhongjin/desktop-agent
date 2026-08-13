@@ -80,6 +80,7 @@ powershell -ExecutionPolicy Bypass -File installer\build-release.ps1
 ```text
 artifacts/
 ├─ DesktopAgent-0.1.0-win64/
+├─ DesktopAgent-Portable-0.1.0-win64.zip
 └─ DesktopAgent-Setup-0.1.0.exe
 ```
 

@@ -30,6 +30,7 @@ $bundleName = "DesktopAgent-$version-win64"
 $buildRoot = Join-Path $repoRoot "build\release"
 $artifactsRoot = Join-Path $repoRoot "artifacts"
 $bundlePath = Join-Path $artifactsRoot $bundleName
+$portableArchivePath = Join-Path $artifactsRoot "DesktopAgent-Portable-$version-win64.zip"
 $installerPath = Join-Path $artifactsRoot "DesktopAgent-Setup-$version.exe"
 
 if (-not $SkipTests) {
@@ -47,6 +48,9 @@ foreach ($target in @($buildRoot, $bundlePath)) {
 if (Test-Path -LiteralPath $installerPath) {
     Remove-Item -LiteralPath $installerPath -Force
 }
+if (Test-Path -LiteralPath $portableArchivePath) {
+    Remove-Item -LiteralPath $portableArchivePath -Force
+}
 New-Item -ItemType Directory -Path $buildRoot -Force | Out-Null
 New-Item -ItemType Directory -Path $artifactsRoot -Force | Out-Null
 
@@ -62,6 +66,7 @@ if (-not $PortableOnly) {
     $candidates = @(
         $InnoSetupCompiler,
         $env:ISCC_PATH,
+        (Join-Path $env:LOCALAPPDATA "Programs\Inno Setup 6\ISCC.exe"),
         "C:\Program Files (x86)\Inno Setup 6\ISCC.exe",
         "C:\Program Files\Inno Setup 6\ISCC.exe"
     ) | Where-Object { $_ -and (Test-Path -LiteralPath $_ -PathType Leaf) }
@@ -74,11 +79,16 @@ if (-not $PortableOnly) {
     if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed." }
 }
 
+Compress-Archive -LiteralPath $bundlePath -DestinationPath $portableArchivePath -CompressionLevel Optimal
 $portableFiles = Get-ChildItem -LiteralPath $bundlePath -File -Recurse
+$portableArchive = Get-Item -LiteralPath $portableArchivePath
 $result = [ordered]@{
     Version = $version
     PortablePath = $bundlePath
     PortableBytes = ($portableFiles | Measure-Object -Property Length -Sum).Sum
+    PortableArchivePath = $portableArchive.FullName
+    PortableArchiveBytes = $portableArchive.Length
+    PortableArchiveSHA256 = (Get-FileHash -LiteralPath $portableArchive.FullName -Algorithm SHA256).Hash
 }
 if (Test-Path -LiteralPath $installerPath) {
     $installer = Get-Item -LiteralPath $installerPath

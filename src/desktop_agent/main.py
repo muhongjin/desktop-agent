@@ -57,6 +57,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     application = QApplication.instance() or QApplication(
         [sys.argv[0], *(argv if argv is not None else sys.argv[1:])]
     )
+    if sys.platform == "win32":
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+            "DesktopAgent.DesktopAgent"
+        )
     application.setWindowIcon(
         QIcon(str(Path(__file__).parent / "resources" / "app-icon.ico"))
     )

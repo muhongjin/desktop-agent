@@ -15,7 +15,7 @@ ApplicationWindow {
     height: 800
     minimumWidth: 920
     minimumHeight: 620
-    visible: true
+    visible: false
     title: qsTr("Desktop Agent")
     color: UI.Theme.background
 

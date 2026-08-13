@@ -38,6 +38,8 @@ async def test_main_window_exposes_confirmed_controls(qapp, tmp_path):
     assert root.findChild(QObject, "fullAccessToggle") is None
     assert root.findChild(QObject, "fullAccessOffButton") is None
     assert root.property("title") == "Desktop Agent"
+    assert root.property("visible") is True
+    assert not root.icon().isNull()
     assert engine._services.sessions.currentSessionTitle == ""
     root.close()
     engine.deleteLater()

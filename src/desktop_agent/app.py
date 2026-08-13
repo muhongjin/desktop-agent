@@ -13,6 +13,7 @@ from PySide6.QtCore import (
     Signal,
     Slot,
 )
+from PySide6.QtGui import QIcon
 from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtQuickControls2 import QQuickStyle
 
@@ -259,6 +260,7 @@ async def build_application(
     safe_mode: bool = False,
 ) -> QQmlApplicationEngine:
     resolved_paths = paths or local_paths()
+    icon = QIcon(str(Path(__file__).parent / "resources" / "app-icon.ico"))
     database = repository.database if repository is not None else Database(resolved_paths.database)
     resolved_repository = repository or Repository(database)
     workspaces = WorkspaceService(resolved_paths.workspaces, resolved_repository)
@@ -292,6 +294,9 @@ async def build_application(
     if not engine.rootObjects():
         database.close()
         raise RuntimeError(f"Unable to load QML application: {qml_path}")
+    window = engine.rootObjects()[0]
+    window.setIcon(icon)
+    window.show()
     current_model = services.sessions.currentModelId
     current_provider = ""
     if ":" in current_model:

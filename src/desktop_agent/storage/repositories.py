@@ -1,6 +1,7 @@
 import json
 import re
 import uuid
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Any
 
@@ -281,6 +282,41 @@ class Repository:
         if self.get_session(session_id) is None:
             raise KeyError(f"Unknown session: {session_id}")
 
+    def set_message_retrieval(self, message_id: str, payload: dict[str, Any]) -> Message:
+        with self.database.transaction():
+            cursor = self.database.execute(
+                "UPDATE messages SET retrieval_json = ? WHERE id = ?",
+                (_json(payload), message_id),
+            )
+            if cursor.rowcount == 0:
+                raise KeyError(f"Unknown message: {message_id}")
+        return self._get_message(message_id)
+
+    def set_session_knowledge_bases(
+        self, session_id: str, kb_ids: Sequence[str]
+    ) -> list[str]:
+        unique = list(dict.fromkeys(kb_ids))
+        with self.database.transaction():
+            self._require_session(session_id)
+            self.database.execute(
+                "DELETE FROM session_knowledge_bases WHERE session_id = ?", (session_id,)
+            )
+            for position, kb_id in enumerate(unique):
+                self.database.execute(
+                    "INSERT INTO session_knowledge_bases (session_id, kb_id, position) "
+                    "VALUES (?, ?, ?)",
+                    (session_id, kb_id, position),
+                )
+        return self.get_session_knowledge_bases(session_id)
+
+    def get_session_knowledge_bases(self, session_id: str) -> list[str]:
+        rows = self.database.execute(
+            "SELECT kb_id FROM session_knowledge_bases WHERE session_id = ? "
+            "ORDER BY position",
+            (session_id,),
+        ).fetchall()
+        return [row["kb_id"] for row in rows]
+
     def _get_message(self, message_id: str) -> Message:
         row = self.database.execute("SELECT * FROM messages WHERE id = ?", (message_id,)).fetchone()
         if row is None:
@@ -298,6 +334,7 @@ class Repository:
             status=MessageStatus(row["status"]),
             completion_marker=bool(row["completion_marker"]),
             created_at=_timestamp(row["created_at"]),
+            retrieval=json.loads(row["retrieval_json"] or "{}"),
         )
 
     def list_messages(self, session_id: str) -> list[Message]:

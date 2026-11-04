@@ -3,9 +3,9 @@ import inspect
 import json
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import suppress
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 from desktop_agent.domain.models import MessageRole, MessageStatus, ToolRunStatus
 from desktop_agent.providers.openai_compatible import (
@@ -29,6 +29,16 @@ PermissionHandler = Callable[
 ]
 
 
+@dataclass(frozen=True, slots=True)
+class RetrievalOutcome:
+    context: str
+    payload: dict[str, Any]
+
+
+class RetrievalProvider(Protocol):
+    async def retrieve(self, session_id: str, query: str) -> RetrievalOutcome | None: ...
+
+
 class ToolStopped(Exception):
     pass
 
@@ -44,6 +54,7 @@ class AgentLoop:
         permission_handler: PermissionHandler | None = None,
         context_limit: int | None = None,
         session_retry: SessionRetry | None = None,
+        retrieval_provider: RetrievalProvider | None = None,
     ):
         self.repository = repository
         self.prompt_composer = prompt_composer
@@ -51,6 +62,7 @@ class AgentLoop:
         self.tool_registry = tool_registry
         self.permission_handler = permission_handler
         self.context_limit = context_limit
+        self.retrieval_provider = retrieval_provider
         self.session_processor = SessionProcessor(repository, provider, session_retry)
 
     async def send_message(
@@ -113,6 +125,22 @@ class AgentLoop:
                 is not PermissionDecision.DENY
             ]
             schemas = [tool.model_schema() for tool in enabled_tools]
+            extra_system_messages: tuple[str, ...] = ()
+            if is_initial_turn and self.retrieval_provider is not None:
+                try:
+                    outcome = await self.retrieval_provider.retrieve(session_id, content)
+                except Exception as error:  # noqa: BLE001 - retrieval failure must not block chat
+                    yield AgentEvent(
+                        "retrieval_failed",
+                        {"message_id": draft.id, "error": str(error)},
+                    )
+                else:
+                    if outcome is not None and outcome.context:
+                        extra_system_messages = (outcome.context,)
+                        yield AgentEvent(
+                            "retrieval",
+                            {"message_id": draft.id, "payload": outcome.payload},
+                        )
             prompt = self.prompt_composer.compose(
                 history,
                 workspace=session.workspace_path,
@@ -120,6 +148,7 @@ class AgentLoop:
                 tools=schemas,
                 context_limit=self.context_limit,
                 truncate=self.context_limit is not None and is_initial_turn,
+                extra_system_messages=extra_system_messages,
             )
             result = None
             async for event in self.session_processor.process(

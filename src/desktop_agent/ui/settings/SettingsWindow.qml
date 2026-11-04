@@ -70,7 +70,8 @@ Window {
                         qsTr("系统提示词"),
                         qsTr("已归档聊天"),
                         qsTr("数据与工作区"),
-                        qsTr("应用")
+                        qsTr("应用"),
+                        qsTr("知识库")
                     ]
 
                     Keys.onPressed: event => {
@@ -141,6 +142,7 @@ Window {
             ArchivedChatsPage {}
             DataWorkspacePage {}
             AppSettingsPage {}
+            KnowledgeBasePage {}
         }
     }
 }

@@ -19,6 +19,9 @@ from PySide6.QtQuickControls2 import QQuickStyle
 
 from desktop_agent.chat_service import ChatService
 from desktop_agent.domain.models import SessionStatus
+from desktop_agent.knowledge.embedding import OpenAICompatibleEmbedding
+from desktop_agent.knowledge.repository import KnowledgeRepository
+from desktop_agent.knowledge.service import KnowledgeService
 from desktop_agent.security.credentials import KeyringCredentialStore
 from desktop_agent.security.permissions import PermissionBroker
 from desktop_agent.services import ArchiveService, DataService, ModelService, SettingsService
@@ -232,6 +235,13 @@ class ApplicationServices(QObject):
         self.sessions = SessionService(repository, workspaces, self.settings)
         self.archive = ArchiveService(repository, workspaces, self.sessions.sessions)
         self.data = DataService(paths.data_dir, paths.workspaces)
+        self.knowledge = KnowledgeService(
+            KnowledgeRepository(paths.data_dir / "knowledge.sqlite3"),
+            repository,
+            self._embedding_client,
+            paths.data_dir,
+            model_lister=self._provider_models,
+        )
         self.chat = ChatService(
             repository,
             self.sessions,
@@ -240,6 +250,7 @@ class ApplicationServices(QObject):
             self.permissions,
             self.credentials,
             safe_mode,
+            knowledge=self.knowledge,
         )
         self.chat.sessionTitleChanged.connect(self.sessions.refreshSessionTitle)
         self.sessions.sessionArchived.connect(self.archive.archived.refresh)
@@ -251,6 +262,26 @@ class ApplicationServices(QObject):
 
     def _warm_current_model(self) -> None:
         self.models.warmModel(self.sessions.currentModelId)
+
+    async def _embedding_client(self, provider_id: str, model_id: str):
+        config = self.repository.get_provider_config(provider_id)
+        if config is None:
+            raise KeyError(f"Unknown provider config: {provider_id}")
+
+        async def client_factory():
+            return await self.models.clientFor(provider_id, config, model_id)
+
+        return OpenAICompatibleEmbedding(client_factory, model_id)
+
+    async def _provider_models(self, provider_id: str) -> list[str]:
+        config = self.repository.get_provider_config(provider_id)
+        if config is None:
+            raise KeyError(f"Unknown provider config: {provider_id}")
+        client = await self.models.clientFor(provider_id, config)
+        return await client.discover_models()
+
+    async def start(self) -> None:
+        await self.knowledge.start()
 
 
 async def build_application(
@@ -265,6 +296,7 @@ async def build_application(
     resolved_repository = repository or Repository(database)
     workspaces = WorkspaceService(resolved_paths.workspaces, resolved_repository)
     services = ApplicationServices(resolved_paths, resolved_repository, workspaces, safe_mode)
+    await services.start()
     application = QCoreApplication.instance()
     if application is not None:
         application.aboutToQuit.connect(services.chat.shutdown)
@@ -288,6 +320,7 @@ async def build_application(
     engine.rootContext().setContextProperty("archiveService", services.archive)
     engine.rootContext().setContextProperty("dataService", services.data)
     engine.rootContext().setContextProperty("chatService", services.chat)
+    engine.rootContext().setContextProperty("knowledgeService", services.knowledge)
     QQuickStyle.setStyle("Basic")
     qml_path = Path(__file__).parent / "ui" / "Main.qml"
     engine.load(QUrl.fromLocalFile(str(qml_path)))

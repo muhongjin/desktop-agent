@@ -28,18 +28,34 @@ class SessionAccess:
     mode: AccessMode
     workspace: Path
     associated_directory: Path | None = None
+    knowledge_kb_ids: frozenset[str] = frozenset()
 
     @classmethod
-    def none(cls, workspace: Path, associated_directory: Path | None = None):
-        return cls(AccessMode.NONE, workspace, associated_directory)
+    def none(
+        cls,
+        workspace: Path,
+        associated_directory: Path | None = None,
+        knowledge_kb_ids: frozenset[str] = frozenset(),
+    ):
+        return cls(AccessMode.NONE, workspace, associated_directory, knowledge_kb_ids)
 
     @classmethod
-    def local(cls, workspace: Path, associated_directory: Path | None = None):
-        return cls(AccessMode.LOCAL, workspace, associated_directory)
+    def local(
+        cls,
+        workspace: Path,
+        associated_directory: Path | None = None,
+        knowledge_kb_ids: frozenset[str] = frozenset(),
+    ):
+        return cls(AccessMode.LOCAL, workspace, associated_directory, knowledge_kb_ids)
 
     @classmethod
-    def full_access(cls, workspace: Path, associated_directory: Path | None = None):
-        return cls(AccessMode.FULL, workspace, associated_directory)
+    def full_access(
+        cls,
+        workspace: Path,
+        associated_directory: Path | None = None,
+        knowledge_kb_ids: frozenset[str] = frozenset(),
+    ):
+        return cls(AccessMode.FULL, workspace, associated_directory, knowledge_kb_ids)
 
 
 class PermissionBroker:
@@ -49,6 +65,10 @@ class PermissionBroker:
 
     def evaluate(self, request: PermissionRequest, access: SessionAccess) -> PermissionDecision:
         capability = request.capability
+        if capability == "kb.read":
+            if access.knowledge_kb_ids:
+                return PermissionDecision.ALLOW
+            return PermissionDecision.DENY
         path = request.path.expanduser().resolve(strict=False)
         trusted = self._is_trusted(path, access)
 

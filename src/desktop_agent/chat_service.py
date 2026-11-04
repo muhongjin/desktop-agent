@@ -1,6 +1,7 @@
 import asyncio
 import json
 import re
+from collections.abc import Sequence
 from contextlib import suppress
 from dataclasses import replace
 from inspect import signature
@@ -9,9 +10,10 @@ from pathlib import Path
 from keyring.errors import KeyringError
 from PySide6.QtCore import Property, QAbstractListModel, QModelIndex, QObject, Qt, Signal, Slot
 
-from desktop_agent.agent.loop import AgentLoop
+from desktop_agent.agent.loop import AgentLoop, RetrievalOutcome
 from desktop_agent.agent.prompt import PromptComposer
 from desktop_agent.domain.models import MessageRole, MessageStatus
+from desktop_agent.knowledge.retriever import format_retrieval_context
 from desktop_agent.providers.openai_compatible import (
     AssistantTurn,
     OpenAICompatibleClient,
@@ -34,6 +36,7 @@ class MessageListModel(QAbstractListModel):
     ToolStatusRole = Qt.UserRole + 6
     ToolInputRole = Qt.UserRole + 7
     CompletionMarkerRole = Qt.UserRole + 8
+    RetrievalRole = Qt.UserRole + 9
 
     def __init__(self, repository):
         super().__init__()
@@ -53,6 +56,7 @@ class MessageListModel(QAbstractListModel):
             self.ToolStatusRole: b"toolStatus",
             self.ToolInputRole: b"toolInput",
             self.CompletionMarkerRole: b"completionMarker",
+            self.RetrievalRole: b"retrieval",
         }
 
     def rowCount(self, parent=None):
@@ -71,6 +75,8 @@ class MessageListModel(QAbstractListModel):
             return message.status.value
         if role == self.CompletionMarkerRole:
             return message.completion_marker
+        if role == self.RetrievalRole:
+            return json.dumps(message.retrieval, ensure_ascii=False) if message.retrieval else ""
         if role == self.DetailsRole:
             return self.details.get(message.id, "")
         tool_run = self.tool_runs.get(message.id)
@@ -138,6 +144,15 @@ class MessageListModel(QAbstractListModel):
             self.dataChanged.emit(index, index, [self.ContentRole])
             return
 
+    def set_retrieval(self, message_id: str, payload: dict) -> None:
+        for row, message in enumerate(self.messages):
+            if message.id != message_id:
+                continue
+            self.messages[row] = replace(message, retrieval=payload)
+            index = self.index(row, 0)
+            self.dataChanged.emit(index, index, [self.RetrievalRole])
+            return
+
     def append_messages(self, messages) -> None:
         existing = {message.id for message in self.messages}
         additions = [
@@ -158,6 +173,7 @@ class ChatService(QObject):
     retryStatusChanged = Signal()
     permissionRequested = Signal(str, str, str)
     sessionTitleChanged = Signal(str)
+    retrievalFailed = Signal(str)
 
     def __init__(
         self,
@@ -170,6 +186,7 @@ class ChatService(QObject):
         safe_mode=False,
         provider_factory=None,
         title_provider_factory=None,
+        knowledge=None,
     ):
         super().__init__()
         self.repository = repository
@@ -179,6 +196,7 @@ class ChatService(QObject):
         self.permission_broker = permission_broker
         self.credentials = credentials
         self.safe_mode = safe_mode
+        self.knowledge = knowledge
         self.provider_factory = provider_factory or OpenAICompatibleClient
         self.title_provider_factory = title_provider_factory or self.provider_factory
         self.messages = MessageListModel(repository)
@@ -363,7 +381,8 @@ class ChatService(QObject):
             if self.sessions.currentSessionId == session.id:
                 self.messages.update_message_content(draft.id, visible_error)
             return
-        access = self._access(session)
+        knowledge_kb_ids = self._session_knowledge_kb_ids(session.id)
+        access = self._access(session, knowledge_kb_ids)
         files = FileTools(self.permission_broker, access)
         registry = {} if self.safe_mode else file_tool_registry(files)
         try:
@@ -381,6 +400,7 @@ class ChatService(QObject):
             registry,
             self._confirm_permission,
             context_limit=self._model_context_limit(config, model_id),
+            retrieval_provider=self._build_retrieval_provider(knowledge_kb_ids),
         )
         completed = False
         try:
@@ -408,6 +428,14 @@ class ChatService(QObject):
                             f"正在重新连接 {event.data['attempt']}/"
                             f"{event.data['max_attempts']}"
                         )
+                    elif event.type == "retrieval":
+                        payload = event.data.get("payload") or {}
+                        message_id = event.data.get("message_id")
+                        if message_id:
+                            self.repository.set_message_retrieval(message_id, payload)
+                            self.messages.set_retrieval(message_id, payload)
+                    elif event.type == "retrieval_failed":
+                        self.retrievalFailed.emit(str(event.data.get("error", "")))
                     elif event.type == "tool_finished":
                         self._set_retry_status("")
                         self.messages.load(session.id)
@@ -512,15 +540,29 @@ class ChatService(QObject):
         with suppress(asyncio.CancelledError):
             task.exception()
 
-    def _access(self, session):
+    def _access(self, session, knowledge_kb_ids=()):
         associated = session.associated_directory
         workspace = Path(session.workspace_path)
         associated_path = Path(associated) if associated else None
+        kb_ids = frozenset(knowledge_kb_ids)
         if self.sessions.fullAccess:
-            return SessionAccess.full_access(workspace, associated_path)
+            return SessionAccess.full_access(workspace, associated_path, kb_ids)
         if session.execution_mode == "none":
-            return SessionAccess.none(workspace, associated_path)
-        return SessionAccess.local(workspace, associated_path)
+            return SessionAccess.none(workspace, associated_path, kb_ids)
+        return SessionAccess.local(workspace, associated_path, kb_ids)
+
+    def _session_knowledge_kb_ids(self, session_id: str) -> list[str]:
+        if self.safe_mode or self.knowledge is None:
+            return []
+        try:
+            return list(self.knowledge.kb_ids_for_session(session_id))
+        except Exception:  # noqa: BLE001 - knowledge lookup must not block chat
+            return []
+
+    def _build_retrieval_provider(self, kb_ids: Sequence[str]):
+        if not kb_ids or self.knowledge is None:
+            return None
+        return _KnowledgeRetrievalProvider(self.knowledge, kb_ids)
 
     async def _confirm_permission(self, request, tool, arguments) -> bool:
         grants = self._session_permissions.get(self._active_session_id, set())
@@ -555,3 +597,18 @@ class ChatService(QObject):
         self._running_session_id = ""
         self.messages.load(self.sessions.currentSessionId)
         self.runningChanged.emit()
+
+
+class _KnowledgeRetrievalProvider:
+    def __init__(self, knowledge, kb_ids: Sequence[str]):
+        self._knowledge = knowledge
+        self._kb_ids = list(kb_ids)
+
+    async def retrieve(self, session_id: str, query: str) -> RetrievalOutcome | None:
+        result = await self._knowledge.retrieve(self._kb_ids, query)
+        if not result.hits:
+            return None
+        return RetrievalOutcome(
+            context=format_retrieval_context(result),
+            payload=result.as_payload(),
+        )

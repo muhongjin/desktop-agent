@@ -13,6 +13,7 @@ FocusScope {
     signal executionModeSelected(string value)
     signal fullAccessChangedByUser(bool enabled)
     signal configureModelsRequested()
+    signal knowledgeSelectionChanged(var ids)
 
     property bool running: false
     property var modelChoices: []
@@ -20,11 +21,14 @@ FocusScope {
     property string thinkingStrength: "medium"
     property string executionMode: "local"
     property bool fullAccess: false
+    property var knowledgeChoices: []
+    property var knowledgeSelectedIds: []
     readonly property bool hasModel: selectedModel.length > 0
     readonly property bool hasConfiguredModels: modelChoices.length > 0
             && modelChoices[0].value !== ""
     readonly property bool popupOpen: preferencePicker.popupOpen
             || executionModePicker.popupOpen
+            || knowledgePicker.popupOpen
 
     implicitHeight: 154
 
@@ -132,6 +136,15 @@ FocusScope {
                     Layout.preferredWidth: implicitWidth
                     mode: root.fullAccess ? "all" : root.executionMode
                     onModeSelected: value => root.selectExecutionMode(value)
+                }
+
+                KnowledgePicker {
+                    id: knowledgePicker
+                    objectName: "knowledgePicker"
+                    Layout.preferredWidth: implicitWidth
+                    choices: root.knowledgeChoices
+                    selectedIds: root.knowledgeSelectedIds
+                    onSelectionChanged: ids => root.knowledgeSelectionChanged(ids)
                 }
 
                 Item {

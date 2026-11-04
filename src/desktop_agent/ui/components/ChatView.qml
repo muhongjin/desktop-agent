@@ -112,6 +112,18 @@ FocusScope {
                     required property string toolStatus
                     required property string toolInput
                     required property bool completionMarker
+                    required property string retrieval
+
+                    readonly property var retrievalHits: {
+                        if (!retrieval)
+                            return []
+                        try {
+                            const parsed = JSON.parse(retrieval)
+                            return parsed && parsed.hits ? parsed.hits : []
+                        } catch (error) {
+                            return []
+                        }
+                    }
 
                     width: timelineColumn.width
                     height: messageColumn.implicitHeight
@@ -187,6 +199,82 @@ FocusScope {
                             toolInput: messageDelegate.toolInput
                             details: messageDelegate.details
                             Layout.fillWidth: true
+                        }
+
+                        ColumnLayout {
+                            id: citationBlock
+                            objectName: "citationBlock"
+                            visible: messageDelegate.role === "assistant"
+                                    && messageDelegate.retrievalHits.length > 0
+                            spacing: Theme.space4
+                            Layout.fillWidth: true
+
+                            Button {
+                                id: citationToggle
+                                objectName: "citationToggle"
+                                text: qsTr("引用 %1 条").arg(messageDelegate.retrievalHits.length)
+                                        + (citationDetails.visible ? "  ⌃" : "  ⌄")
+                                flat: true
+                                activeFocusOnTab: true
+                                onClicked: citationDetails.visible = !citationDetails.visible
+                            }
+
+                            ColumnLayout {
+                                id: citationDetails
+                                visible: false
+                                spacing: Theme.space4
+                                Layout.fillWidth: true
+
+                                Repeater {
+                                    model: messageDelegate.retrievalHits
+
+                                    delegate: Rectangle {
+                                        id: citationRow
+                                        required property var modelData
+                                        Layout.fillWidth: true
+                                        implicitHeight: citationColumn.implicitHeight
+                                                + Theme.space8 * 2
+                                        radius: Theme.radiusMedium
+                                        color: Theme.surfaceSecondary
+                                        border.color: Theme.border
+                                        border.width: 1
+
+                                        ColumnLayout {
+                                            id: citationColumn
+                                            anchors.left: parent.left
+                                            anchors.right: parent.right
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            anchors.margins: Theme.space8
+                                            spacing: Theme.space2
+
+                                            Label {
+                                                Layout.fillWidth: true
+                                                text: "[" + modelData.n + "] "
+                                                        + (modelData.doc_name || "")
+                                                        + (modelData.heading
+                                                           ? " / " + modelData.heading : "")
+                                                        + (modelData.page
+                                                           ? " / " + qsTr("第 %1 页").arg(modelData.page)
+                                                           : "")
+                                                color: Theme.textSecondary
+                                                font.family: Theme.fontFamily
+                                                font.pixelSize: Theme.fontCaption
+                                                font.weight: Font.DemiBold
+                                                elide: Text.ElideRight
+                                            }
+
+                                            Label {
+                                                Layout.fillWidth: true
+                                                text: modelData.snippet || ""
+                                                color: Theme.textMuted
+                                                font.family: Theme.fontFamily
+                                                font.pixelSize: Theme.fontCaption
+                                                wrapMode: Text.Wrap
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }

@@ -1,6 +1,7 @@
 import json
 import math
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 from importlib.resources import files
 from pathlib import Path
@@ -35,6 +36,7 @@ class PromptComposer:
         tools: list[dict[str, Any]] | tuple[dict[str, Any], ...] = (),
         context_limit: int | None = None,
         truncate: bool = False,
+        extra_system_messages: Sequence[str] = (),
     ) -> PromptRequest:
         kernel = (
             files("desktop_agent.resources")
@@ -45,6 +47,9 @@ class PromptComposer:
         messages: list[dict[str, Any]] = [{"role": "system", "content": kernel}]
         if self.global_prompt.strip():
             messages.append({"role": "system", "content": self.global_prompt.strip()})
+        for content in extra_system_messages:
+            if content.strip():
+                messages.append({"role": "system", "content": content.strip()})
         usable = [message for message in history if message.completion_marker]
         history_groups = self._history_groups(usable)
         history_payload = [

@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS messages (
     tool_call_id TEXT,
     status TEXT NOT NULL CHECK (status IN ('complete', 'stopped')),
     completion_marker INTEGER NOT NULL CHECK (completion_marker IN (0, 1)),
+    retrieval_json TEXT NOT NULL DEFAULT '{}',
     created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS tool_runs (
@@ -54,6 +55,12 @@ CREATE TABLE IF NOT EXISTS app_settings (
     key TEXT PRIMARY KEY,
     value_json TEXT NOT NULL,
     updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS session_knowledge_bases (
+    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    kb_id TEXT NOT NULL,
+    position INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (session_id, kb_id)
 );
 """
 
@@ -88,6 +95,10 @@ class Database:
             )
         if "tool_call_id" not in message_columns:
             self.connection.execute("ALTER TABLE messages ADD COLUMN tool_call_id TEXT")
+        if "retrieval_json" not in message_columns:
+            self.connection.execute(
+                "ALTER TABLE messages ADD COLUMN retrieval_json TEXT NOT NULL DEFAULT '{}'"
+            )
         self.connection.execute(
             "INSERT INTO schema_meta (key, value) VALUES ('schema_version', '3') "
             "ON CONFLICT(key) DO UPDATE SET value = excluded.value"

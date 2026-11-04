@@ -16,14 +16,14 @@ async def build_settings_window(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_settings_window_has_exactly_five_pages_and_required_states(qapp, tmp_path):
+async def test_settings_window_has_exactly_six_pages_and_required_states(qapp, tmp_path):
     engine, root, settings = await build_settings_window(tmp_path)
     pages = settings.findChild(QObject, "settingsPages")
 
     assert settings is not None
     assert settings.property("minimumWidth") >= 780
     assert settings.property("minimumHeight") >= 540
-    assert pages.property("count") == 5
+    assert pages.property("count") == 6
     assert settings.findChild(QObject, "providerConfigList") is not None
     assert settings.findChild(QObject, "providerConfigRepeater") is not None
     assert settings.findChild(QObject, "addProviderButton") is not None
@@ -43,8 +43,13 @@ async def test_settings_window_has_exactly_five_pages_and_required_states(qapp, 
         "archivedChatsPage",
         "dataWorkspacePage",
         "appSettingsPage",
+        "knowledgePage",
     ):
         assert settings.findChild(QObject, page_name) is not None
+    assert settings.findChild(QObject, "knowledgeBaseList") is not None
+    assert settings.findChild(QObject, "createKnowledgeBaseButton") is not None
+    assert settings.findChild(QObject, "documentList") is not None
+    assert settings.findChild(QObject, "retrievalQueryInput") is not None
 
     root.close()
     engine.deleteLater()
@@ -137,7 +142,7 @@ async def test_settings_navigation_supports_home_and_end(qapp, tmp_path):
 
     QTest.keyClick(settings, Qt.Key_End)
     qapp.processEvents()
-    assert navigation.property("currentIndex") == 4
+    assert navigation.property("currentIndex") == 5
 
     QTest.keyClick(settings, Qt.Key_Home)
     qapp.processEvents()

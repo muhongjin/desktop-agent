@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
 from typing import Any
@@ -54,6 +54,7 @@ class Message:
     status: MessageStatus
     completion_marker: bool
     created_at: datetime
+    retrieval: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)

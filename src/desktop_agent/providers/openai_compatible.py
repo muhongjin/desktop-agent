@@ -108,6 +108,40 @@ class OpenAICompatibleClient:
             detail = self._safe_error("Model discovery failed", error)
             raise ModelDiscoveryError(f"{detail}; enter a model ID manually") from error
 
+    async def embed_texts(
+        self, *, model_id: str, texts: Sequence[str]
+    ) -> list[list[float]]:
+        payload = {"model": model_id, "input": list(texts)}
+        try:
+            response = await self.client.post(
+                f"{self.base_url}/embeddings", json=payload, headers=self.headers
+            )
+            response.raise_for_status()
+            payload = response.json()
+            data = payload.get("data")
+            if not isinstance(data, list) or len(data) != len(texts):
+                raise ProviderError("Embedding response is missing data")
+            ordered = sorted(data, key=lambda item: item.get("index", 0))
+            vectors = [list(map(float, item["embedding"])) for item in ordered]
+            dimensions = {len(vector) for vector in vectors}
+            if len(dimensions) != 1:
+                raise ProviderError("Embedding response has inconsistent dimensions")
+            return vectors
+        except httpx.TimeoutException as error:
+            raise ProviderTimeout("Embedding request timed out") from error
+        except httpx.HTTPStatusError as error:
+            raise ProviderError(
+                self._safe_error("Embedding request failed", error),
+                retryable=self._retryable_status(error.response.status_code),
+                status_code=error.response.status_code,
+                response_headers=dict(error.response.headers),
+                response_body=self._safe_response_body(error.response),
+            ) from error
+        except (httpx.HTTPError, ValueError, TypeError, KeyError) as error:
+            raise ProviderError(
+                self._safe_error("Embedding request failed", error), retryable=True
+            ) from error
+
     async def stream_chat(
         self,
         *,

@@ -33,6 +33,52 @@ ApplicationWindow {
         settingsWindow.requestActivate()
     }
 
+    property var knowledgeChoices: []
+    property var sessionKnowledgeIds: []
+
+    function refreshKnowledgeChoices() {
+        knowledgeChoices = knowledgeService.knowledgeBaseChoices()
+    }
+
+    function refreshSessionKnowledge() {
+        if (!sessionService.hasCurrentSession) {
+            sessionKnowledgeIds = []
+            return
+        }
+        sessionKnowledgeIds = knowledgeService.sessionKnowledgeBases(
+                    sessionService.currentSessionId)
+    }
+
+    function applyKnowledgeSelection(ids) {
+        if (!sessionService.hasCurrentSession)
+            return
+        knowledgeService.setSessionKnowledgeBases(sessionService.currentSessionId, ids)
+        sessionKnowledgeIds = ids
+    }
+
+    Component.onCompleted: {
+        refreshKnowledgeChoices()
+        refreshSessionKnowledge()
+    }
+
+    Connections {
+        target: knowledgeService
+
+        function onKnowledgeBasesChanged() {
+            window.refreshKnowledgeChoices()
+        }
+    }
+
+    Connections {
+        target: sessionService
+
+        function onCurrentSessionChanged() {
+            window.refreshSessionKnowledge()
+        }
+    }
+
+    property string retrievalNotice: ""
+
     SettingsViews.SettingsWindow {
         id: settingsWindow
     }
@@ -44,6 +90,10 @@ ApplicationWindow {
 
     Connections {
         target: chatService
+
+        function onRetrievalFailed(error) {
+            window.retrievalNotice = qsTr("知识库检索失败，已按普通对话回答")
+        }
 
         function onPermissionRequested(capability, path, detail) {
             permissionDialog.capability = capability
@@ -263,6 +313,9 @@ ApplicationWindow {
                 onExecutionModeSelected: sessionService.setExecutionMode(value)
                 onFullAccessChangedByUser: sessionService.setFullAccess(enabled)
                 onConfigureModelsRequested: window.showModelSettings()
+                knowledgeChoices: window.knowledgeChoices
+                knowledgeSelectedIds: window.sessionKnowledgeIds
+                onKnowledgeSelectionChanged: ids => window.applyKnowledgeSelection(ids)
                 onSendRequested: text => chatService.sendMessage(text)
                 onStopRequested: chatService.stop()
             }
